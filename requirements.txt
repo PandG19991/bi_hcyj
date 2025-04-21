@@ -1,0 +1,5 @@
+ SQLAlchemy>=1.4,<2.0
+ requests>=2.25
+ python-dotenv>=0.19 
+ APScheduler>=3.8
+ pymysql>=1.0  
