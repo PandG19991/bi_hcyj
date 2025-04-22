@@ -30,6 +30,11 @@ def retry(max_tries=None, delay=None, backoff=2, exceptions=(Exception,)):
             mtries, mdelay = max_tries, delay
             while mtries > 0:
                 try:
+                    # --- 调试代码开始 ---
+                    logger.debug(f"[Retry Debug] Calling {func.__name__}")
+                    logger.debug(f"[Retry Debug] Received args: {args}")
+                    logger.debug(f"[Retry Debug] Received kwargs: {kwargs}")
+                    # --- 调试代码结束 ---
                     return func(*args, **kwargs)
                 except exceptions as e:
                     mtries -= 1
@@ -54,5 +59,22 @@ def retry(max_tries=None, delay=None, backoff=2, exceptions=(Exception,)):
 
         return wrapper
     return decorator
+
+# --- 极简调试用装饰器 ---
+def simple_passthrough_decorator(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        logger.debug(f"[Simple Decorator] Calling {func.__name__}")
+        logger.debug(f"[Simple Decorator] Received args: {args}")
+        logger.debug(f"[Simple Decorator] Received kwargs: {kwargs}")
+        try:
+            result = func(*args, **kwargs)
+            logger.debug(f"[Simple Decorator] {func.__name__} returned.")
+            return result
+        except Exception as e:
+            logger.error(f"[Simple Decorator] {func.__name__} raised an exception: {e}", exc_info=True)
+            raise
+    return wrapper
+# --- 结束调试用装饰器 ---
 
 # 移除旧的 __main__ 示例 

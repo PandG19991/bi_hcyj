@@ -20,8 +20,9 @@ CREATE TABLE orders (
     order_state INT COMMENT '订单状态码 (小鹅通原始状态)',
     order_state_text VARCHAR(100) COMMENT '订单状态文本',
     resource_type INT COMMENT '资源类型码',
-    resource_type_text VARCHAR(100) COMMENT '资源类型文本',
+    resource_type_text VARCHAR(50) COMMENT '资源类型文本 (e.g., \'知识商品\', \'实物商品\')',
     pay_time DATETIME COMMENT '支付时间 (UTC)',
+    aftersale_id VARCHAR(100) COMMENT '售后单号 (如果订单发生售后)',
     created_at DATETIME NOT NULL COMMENT '订单创建时间 (UTC)',
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间',
     -- 根据需要添加更多核心字段, 例如 ship_state, pay_way 等

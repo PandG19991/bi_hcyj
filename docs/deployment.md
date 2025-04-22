@@ -80,49 +80,55 @@
     PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
     export PATH
 
-    # **重要:** 宝塔 Python 项目管理器创建的 Python 解释器路径 (务必根据实际情况修改!)
-    # 在宝塔项目管理器设置页面可以找到，或者通过 which python 查看
-    PYTHON_EXEC=/www/server/pyenv/versions/<your-python-env-name>/bin/python
-    # 项目脚本路径
+    # **重要:** 实际的 Python 虚拟环境解释器路径
+    PYTHON_EXEC=/www/wwwroot/data_sync/10623a8bae6b704e67212081566ad1d2_venv/bin/python3
+    # 项目脚本路径 (使用绝对路径更保险)
     SCRIPT_PATH=/www/wwwroot/data_sync/scripts/sync_xiaoe.py
     # 项目根目录
     PROJECT_DIR=/www/wwwroot/data_sync
-    # 日志文件
-    LOG_FILE=$PROJECT_DIR/logs/cron_incremental.log # 使用变量更清晰
+    # 日志文件 (使用绝对路径)
+    LOG_FILE=/www/wwwroot/data_sync/logs/cron_incremental.log
 
     echo "--------------------" >> $LOG_FILE
     echo "Task started at: $(date)" >> $LOG_FILE
     # 使用指定的 Python 解释器执行脚本，切换到项目目录以确保相对路径正确
     cd $PROJECT_DIR && $PYTHON_EXEC $SCRIPT_PATH --sync-type incremental >> $LOG_FILE 2>&1
+    echo "--------------------" >> $LOG_FILE
     echo "Task finished at: $(date)" >> $LOG_FILE
     echo "--------------------" >> $LOG_FILE
     ```
-    *   再次强调：务必将 `<your-python-env-name>` 替换为你在宝塔 Python 项目管理器中设置的环境名称或找到正确的 `python` 可执行文件路径。
+    *   再次强调：务必将脚本中的 `PYTHON_EXEC` 变量值替换为你在服务器上找到的正确的 Python 解释器路径。
 
 *   **添加第二个计划任务:** 用于订单状态更新。
     *   **任务名称:** 例如 "小鹅通订单状态更新"。
     *   **执行周期:** 例如 "每小时"。
     *   **脚本内容:** 与上面类似，但修改 `--sync-type` 参数和日志文件名：
         ```bash
-        # ... (前面的 PATH 和变量定义相同) ...
+        #!/bin/bash
+        PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
+        export PATH
+
+        # **重要:** 实际的 Python 虚拟环境解释器路径
+        PYTHON_EXEC=/www/wwwroot/data_sync/10623a8bae6b704e67212081566ad1d2_venv/bin/python3
+        # 项目脚本路径 (使用绝对路径更保险)
+        SCRIPT_PATH=/www/wwwroot/data_sync/scripts/sync_xiaoe.py
+        # 项目根目录
+        PROJECT_DIR=/www/wwwroot/data_sync
+        # 日志文件 (使用绝对路径)
         LOG_FILE=$PROJECT_DIR/logs/cron_status_update.log
-        # ...
+
+        echo "--------------------" >> $LOG_FILE
+        echo "Task started at: $(date)" >> $LOG_FILE
+        # 使用指定的 Python 解释器执行脚本，切换到项目目录以确保相对路径正确
         cd $PROJECT_DIR && $PYTHON_EXEC $SCRIPT_PATH --sync-type status_update >> $LOG_FILE 2>&1
-        # ...
+        echo "--------------------" >> $LOG_FILE
+        echo "Task finished at: $(date)" >> $LOG_FILE
+        echo "--------------------" >> $LOG_FILE
         ```
+    *   **重要:** 同样地，确保此脚本中 `PYTHON_EXEC` 路径正确，并且脚本内容没有包含此注释行。
 
 *   点击 "添加任务"。
 
 **7. 监控与维护:**
 
-*   **检查任务执行日志:** 定期查看宝塔计划任务的执行日志（点击任务后的 "日志" 按钮）以及脚本自身输出到 `logs/` 目录下的日志文件 (`cron_incremental.log`, `cron_status_update.log`)。
-*   **检查数据库数据:** 定期抽查数据库中的数据，确认同步的准确性和及时性。
-*   **宝塔面板监控:** 利用宝塔面板的系统负载、CPU、内存监控，观察脚本运行期间的资源消耗。
-*   **代码更新:** 如果需要更新代码，使用 `git pull` 更新代码，如果依赖有变化，重新执行 `pip install -r requirements.txt`。
-
-## 注意事项
-
-*   **Python 路径:** 宝塔计划任务中 Python 解释器的路径 (`PYTHON_EXEC`) 至关重要，务必填写正确。
-*   **文件权限:** 确保运行计划任务的用户（通常是 `www` 或 `root`）对项目目录、脚本、日志文件有读写执行权限。
-*   **环境变量:** 宝塔计划任务默认可能不会加载用户的 `.bashrc` 或 `.profile`，因此直接在脚本中指定 Python 完整路径比依赖 `PATH` 更可靠。`.env` 文件由 Python 脚本内部加载，不受此影响。
-*   **日志轮转:** 对于长期运行的任务，需要配置日志轮转（例如使用 Linux 的 `logrotate` 工具或 Python 的 `logging.handlers.RotatingFileHandler`）以防止日志文件无限增大。MVP 阶段可以暂时手动清理。
+*   **检查任务执行日志:** 定期查看宝塔计划任务的执行日志（点击任务后的 "日志" 按钮）以及脚本自身输出到 `

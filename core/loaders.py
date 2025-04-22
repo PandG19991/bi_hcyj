@@ -1,16 +1,21 @@
 # core/loaders.py
-from typing import List, Dict, Any, Type
+from typing import List, Dict, Any, Type, Union
 from sqlalchemy.dialects.mysql import insert as mysql_insert # MySQL specific insert
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import delete
+from collections import defaultdict
 
 from core.db import get_db, Base # 导入数据库会话获取函数和 Base
 from utils.logger import logger
+from core.models import Order, AftersaleOrder, AftersaleItem # 导入所需模型
 
-# 定义一个类型别名，表示数据项可以是字典或模型实例
-DataItem = Dict[str, Any] | Base
+# 定义输入数据的可能类型：字典或 SQLAlchemy 模型实例
+DataItem = Union[Dict[str, Any], Base] # 使用 Union
 
-def upsert_data(db: Session, model_class: Type[Base], data_list: List[DataItem]):
+ModelType = Type[Base] # 类型提示，表示模型类本身
+
+def upsert_data(db: Session, model_class: ModelType, data_list: List[DataItem]):
     """
     将数据批量 UPSERT (Insert or Update) 到指定的数据库表中。
 
@@ -166,3 +171,146 @@ def upsert_data(db: Session, model_class: Type[Base], data_list: List[DataItem])
 #         session.close()
 #         # db_session.remove() # 如果使用 scoped_session，可以用 remove()
 #         logger.info("Database session closed.")
+
+# --- 特定模型的加载器 --- 
+
+def upsert_aftersale_orders_with_user_lookup(db: Session, aftersale_orders_data: List[Dict[str, Any]]):
+    """
+    Upserts AftersaleOrder records, automatically looking up the user_id from the related Order.
+
+    Args:
+        db: SQLAlchemy 数据库会话。
+        aftersale_orders_data: List of transformed aftersale order dictionaries.
+    """
+    if not aftersale_orders_data:
+        logger.info("No aftersale order data provided for upsert. Skipping.")
+        return
+
+    processed_data = []
+    order_ids = {d['order_id']: d['platform'] for d in aftersale_orders_data if 'order_id' in d and 'platform' in d}
+
+    # 批量查询关联订单的 user_id
+    user_id_map = {}
+    if order_ids:
+        try:
+            # 构建查询条件，支持复合主键
+            order_query = db.query(Order.order_id, Order.platform, Order.user_id)\
+                            .filter(tuple_(Order.platform, Order.order_id).in_([(p, o) for o, p in order_ids.items()]))
+            results = order_query.all()
+            for platform, order_id, user_id in results:
+                user_id_map[(platform, order_id)] = user_id
+            logger.info(f"Fetched user_ids for {len(user_id_map)} associated orders.")
+        except SQLAlchemyError as e:
+            logger.error(f"Error fetching user_ids for orders: {e}", exc_info=True)
+            # 如果查询失败，可以选择继续（user_id 为 None）或抛出异常
+            # 这里选择继续
+
+    # 准备最终数据，填充 user_id
+    for data in aftersale_orders_data:
+        platform = data.get('platform')
+        order_id = data.get('order_id')
+        aftersale_id = data.get('aftersale_id')
+
+        if not platform or not order_id or not aftersale_id:
+            logger.warning(f"Skipping aftersale order due to missing platform, order_id, or aftersale_id: {data}")
+            continue
+
+        # 从 map 获取 user_id
+        data['user_id'] = user_id_map.get((platform, order_id))
+        if data['user_id'] is None:
+            logger.warning(f"Could not find user_id for aftersale order {aftersale_id} (order_id: {order_id}, platform: {platform}). Setting user_id to NULL.")
+
+        processed_data.append(data)
+
+    if not processed_data:
+        logger.warning("No processable aftersale order data found after user_id lookup.")
+        return
+
+    # 调用通用的 upsert 函数
+    logger.info(f"Calling upsert_data for {len(processed_data)} AftersaleOrder records.")
+    upsert_data(db, AftersaleOrder, processed_data)
+
+def replace_aftersale_items(db: Session, aftersale_items_data: List[Dict[str, Any]]):
+    """
+    Replaces (deletes then inserts) AftersaleItem records for the given aftersale_ids.
+
+    Args:
+        db: SQLAlchemy 数据库会话。
+        aftersale_items_data: List of transformed aftersale item dictionaries.
+                               Must contain 'aftersale_id' and 'platform'.
+    """
+    if not aftersale_items_data:
+        logger.info("No aftersale item data provided for replacement. Skipping.")
+        return
+
+    # 按 (platform, aftersale_id) 分组数据
+    grouped_items = defaultdict(list)
+    aftersale_ids_to_process = set()
+    valid_items_count = 0
+
+    for item in aftersale_items_data:
+        platform = item.get('platform')
+        aftersale_id = item.get('aftersale_id')
+        if platform and aftersale_id:
+            key = (platform, aftersale_id)
+            grouped_items[key].append(item)
+            aftersale_ids_to_process.add(key)
+            valid_items_count += 1
+        else:
+            logger.warning(f"Skipping aftersale item due to missing platform or aftersale_id: {item}")
+
+    if not aftersale_ids_to_process:
+        logger.warning("No valid aftersale items with platform and aftersale_id found for replacement.")
+        return
+
+    logger.info(f"Starting replacement for {valid_items_count} AftersaleItem records across {len(aftersale_ids_to_process)} aftersale orders.")
+
+    try:
+        # 1. 删除现有项目
+        if aftersale_ids_to_process:
+            # 构建删除条件
+            # delete_stmt = delete(AftersaleItem)\
+            #                .where(tuple_(AftersaleItem.platform, AftersaleItem.aftersale_id).in_(aftersale_ids_to_process))
+
+            # 考虑到性能和可能的锁定问题，分批删除或逐个 aftersale_id 删除可能更好
+            # 这里采用逐个 aftersale_id 删除
+            deleted_count_total = 0
+            for platform, aftersale_id in aftersale_ids_to_process:
+                delete_stmt = delete(AftersaleItem)\
+                                .where(AftersaleItem.platform == platform)\
+                                .where(AftersaleItem.aftersale_id == aftersale_id)
+                result = db.execute(delete_stmt)
+                deleted_count_total += result.rowcount
+                # logger.debug(f"Deleted {result.rowcount} existing items for aftersale_id: {aftersale_id} ({platform}).")
+            logger.info(f"Deleted {deleted_count_total} existing AftersaleItem records for {len(aftersale_ids_to_process)} aftersale orders.")
+
+        # 2. 插入新项目
+        # 准备要插入的数据列表 (只包含有效字段)
+        all_items_to_insert = []
+        table_columns = {c.name for c in AftersaleItem.__table__.columns}
+        for key in grouped_items:
+            for item_dict in grouped_items[key]:
+                filtered_item = {k: v for k, v in item_dict.items() if k in table_columns}
+                all_items_to_insert.append(filtered_item)
+
+        if all_items_to_insert:
+            # 使用 bulk_insert_mappings 以获得更好的性能
+            db.bulk_insert_mappings(AftersaleItem, all_items_to_insert)
+            logger.info(f"Bulk inserted {len(all_items_to_insert)} new AftersaleItem records.")
+        else:
+             logger.info("No new AftersaleItem records to insert.")
+
+        # 3. 提交事务
+        db.commit()
+        logger.info(f"Successfully replaced AftersaleItem data for {len(aftersale_ids_to_process)} aftersale orders. Transaction committed.")
+
+    except SQLAlchemyError as e:
+        logger.error(f"Database error during replacing AftersaleItem data: {e}", exc_info=True)
+        db.rollback()
+        logger.warning("Transaction rolled back for AftersaleItem replacement.")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error during replacing AftersaleItem data: {e}", exc_info=True)
+        db.rollback()
+        logger.warning("Transaction rolled back for AftersaleItem replacement.")
+        raise

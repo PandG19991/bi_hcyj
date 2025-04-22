@@ -10,7 +10,8 @@ import argparse
 import sys
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Optional, List, Dict, Any
+from sqlalchemy.orm import Session
 
 # 确保项目根目录在 sys.path 中，以便导入模块
 # (这在使用绝对路径的 cron 任务或直接运行时很有用)
@@ -23,15 +24,18 @@ if PROJECT_ROOT not in sys.path:
 from config.config import settings
 from utils.logger import logger, setup_logging
 from core.db import get_db, SessionLocal, engine, Base
-from core.models import Order, OrderItem, User, Product, SyncStatus
-from core.loaders import upsert_data
+from core.models import Order, OrderItem, User, Product, SyncStatus, AftersaleOrder, AftersaleItem
+from core.loaders import upsert_data, upsert_aftersale_orders_with_user_lookup, replace_aftersale_items
 from platforms.xiaoe.client import XiaoeClient, XiaoeAuthError, XiaoeRequestError
-from platforms.xiaoe.transformers import transform_order, transform_order_items, transform_user, transform_product
+from platforms.xiaoe.transformers import (
+    transform_order, transform_order_items, transform_user, transform_product, 
+    transform_after_sale_order, transform_aftersale_items
+)
 import time # 导入 time 模块
 
 # --- 同步函数定义 --- 
 
-def update_sync_status(db: SessionLocal, platform: str, data_type: str, mode: str, 
+def update_sync_status(db: Session, platform: str, data_type: str, mode: str, 
                        status: str, message: Optional[str] = None, 
                        start_time: Optional[datetime] = None, end_time: Optional[datetime] = None, 
                        last_sync_ts: Optional[datetime] = None):
@@ -63,7 +67,7 @@ def update_sync_status(db: SessionLocal, platform: str, data_type: str, mode: st
         logger.error(f"Failed to update sync status for {platform}/{data_type}/{mode}: {e}", exc_info=True)
         db.rollback()
 
-def get_last_sync_timestamp(db: SessionLocal, platform: str, data_type: str, mode: str) -> Optional[datetime]:
+def get_last_sync_timestamp(db: Session, platform: str, data_type: str, mode: str) -> Optional[datetime]:
     """获取上次成功同步的时间戳。"""
     try:
         sync_record = db.query(SyncStatus).filter_by(
@@ -239,10 +243,11 @@ def run_status_update_sync():
     platform = "xiaoe"
     data_type = "order"
     mode = "status_update"
+    sync_target = "xiaoe_orders_status_update"
     db = SessionLocal()
     sync_status = "failed"
     error_message = None
-    
+
     try:
         # 1. 确定要检查的时间范围
         update_days = settings.STATUS_UPDATE_DAYS
@@ -251,28 +256,36 @@ def run_status_update_sync():
 
         start_time_str = start_scan_dt.strftime("%Y-%m-%d %H:%M:%S")
         end_time_str = end_scan_dt.strftime("%Y-%m-%d %H:%M:%S")
-        logger.info(f"Checking order status updates created from {start_time_str} to {end_time_str}")
+        logger.info(f"Fetching orders created from {start_time_str} to {end_time_str} for status update.")
 
         # 2. 初始化 API Client
         client = XiaoeClient()
 
-        # 3. 分页获取近期创建的订单
+        # 3. 分页获取近期创建的订单 (不再基于数据库查询的 ID 列表)
         page = 1
-        page_size = 50
+        page_size = 50 # 或从配置读取
         all_orders_to_update = []
+        all_items_to_update = [] # 同时处理订单项
         total_orders_fetched = 0
         
         while True:
             logger.info(f"Fetching page {page} of recent orders (size={page_size}) for status update...")
             try:
-                # 获取该时间段内创建的所有状态的订单
-                response_data = client.get_orders(page=page, page_size=page_size, start_time=start_time_str, end_time=end_time_str)
+                # 调用 get_orders 获取该时间段内创建的所有状态的订单
+                # 注意：API 按创建时间筛选，但 UPSERT 会更新找到的订单
+                response_data = client.get_orders(
+                    page=page, 
+                    page_size=page_size, 
+                    start_time=start_time_str, 
+                    end_time=end_time_str
+                    # 不指定 order_state 以获取所有状态
+                )
                 
                 orders_in_page = response_data.get('list', [])
                 # total_count = response_data.get('total_count', 0)
                 
                 if not orders_in_page:
-                    logger.info("No more recent orders found.")
+                    logger.info("No more recent orders found in this time range.")
                     break
                     
                 total_orders_fetched += len(orders_in_page)
@@ -283,16 +296,21 @@ def run_status_update_sync():
                     order_transformed = transform_order(order_raw)
                     if order_transformed:
                         all_orders_to_update.append(order_transformed)
+                        # 同时转换订单项
+                        items_transformed = transform_order_items(order_raw)
+                        if items_transformed:
+                             all_items_to_update.extend(items_transformed)
                 
+                # 分页判断
                 if len(orders_in_page) < page_size:
-                    logger.info("Fetched less orders than page size, assuming last page for status update.")
+                    logger.info("Fetched less orders than page size, assuming last page for status update scan.")
                     break
                 
                 page += 1
                 if page > 500: # Max page limit
                     logger.warning("Reached maximum page limit (500) for status update scan.")
                     break
-                time.sleep(0.5)
+                time.sleep(0.5) # API rate limit
                 
             except (XiaoeAuthError, XiaoeRequestError) as api_error:
                 error_message = f"API error during status update fetch page {page}: {api_error}"
@@ -303,16 +321,22 @@ def run_status_update_sync():
                 logger.error(error_message, exc_info=True)
                 raise
                 
-        # 5. 加载数据到数据库 (UPSERT 会自动更新已有订单)
+        # 5. 加载数据到数据库 (UPSERT 会自动更新已有订单/订单项)
         if all_orders_to_update:
-            logger.info(f"Upserting {len(all_orders_to_update)} orders for status update...")
+            logger.info(f"Upserting {len(all_orders_to_update)} orders for potential status update...")
             upsert_data(db, Order, all_orders_to_update)
         else:
             logger.info("No recent orders found or processed for status update.")
 
-        # 6. 成功
+        if all_items_to_update:
+            logger.info(f"Upserting {len(all_items_to_update)} order items associated with recent orders...")
+            upsert_data(db, OrderItem, all_items_to_update)
+        else:
+            logger.info("No associated order items found or processed.")
+
+        # 6. 成功处理
         sync_status = "success"
-        logger.info("Xiaoe order status update sync completed successfully.")
+        logger.info(f"{sync_target} completed successfully.")
 
     except Exception as e:
         sync_status = "failed"
@@ -330,45 +354,195 @@ def run_status_update_sync():
         db.close()
         logger.info("Database session closed for status update sync.")
 
-# --- 主程序入口 ---
+def run_after_sale_sync(full_sync: bool = False):
+    """执行小鹅通售后订单的同步（全量或增量）。"""
+    logger.info(f"Starting Xiaoe aftersale order sync (Full sync: {full_sync})...")
+    start_run_time = datetime.now(timezone.utc)
+    platform = "xiaoe"
+    data_type = "aftersale"
+    # 模式根据 full_sync 标志决定
+    mode = "full" if full_sync else "incremental" 
+    db = SessionLocal()
+    sync_status = "failed" 
+    error_message = None
+    last_sync_ts = None
+    # 对于增量，下次同步的起点；对于全量，此值无意义，但可以记录运行时间
+    new_last_sync_ts = start_run_time 
 
+    try:
+        client = XiaoeClient()
+        all_aftersale_orders = []
+        all_aftersale_items = []
+        total_fetched = 0
+        page = 1
+        page_size = 50
+
+        # 确定查询时间范围
+        start_sync_dt = None
+        end_sync_dt = start_run_time # 结束时间总是当前运行时间
+
+        if not full_sync:
+            last_sync_ts = get_last_sync_timestamp(db, platform, data_type, mode)
+            if last_sync_ts:
+                start_sync_dt = last_sync_ts
+                new_last_sync_ts = last_sync_ts # 默认保留上次时间戳
+            else:
+                # 首次增量，从配置或默认时间开始（例如1天前）
+                start_sync_dt = start_run_time - timedelta(days=settings.INITIAL_SYNC_DAYS)
+                logger.warning(f"No last sync timestamp for incremental aftersale sync. Starting from {start_sync_dt.isoformat()}")
+        else:
+            # 全量同步，不限制开始时间 (API 可能需要一个非常早的时间或不支持为空)
+            # 需要查阅 get_aftersales API 是否支持不传 start_time
+            # 假设传 None 或非常早的时间表示全量
+            start_sync_dt = None 
+            logger.info("Performing a full sync of aftersale orders.")
+
+        # 时间格式化 (如果需要)
+        start_time_str = (start_sync_dt + timedelta(seconds=1)).strftime("%Y-%m-%d %H:%M:%S") if start_sync_dt else None
+        end_time_str = end_sync_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+        while True:
+            logger.info(f"Fetching page {page} for {data_type} (size={page_size}) from {start_time_str or 'beginning'} to {end_time_str}")
+            try:
+                # 调用 API 获取数据 (需要确认API参数, 假设与订单类似)
+                # 假设 get_aftersales 支持 start_time, end_time, page, page_size
+                # 修正方法名为 get_after_sale_orders，并显式添加 date_type
+                response_data = client.get_after_sale_orders(
+                    page=page, 
+                    page_size=page_size, 
+                    start_time=start_time_str, 
+                    end_time=end_time_str,
+                    date_type='created_at' # 显式指定按创建时间查询
+                )
+
+                aftersales_in_page = response_data.get('list', [])
+                if not aftersales_in_page:
+                    logger.info("No more aftersale orders found in this page/range.")
+                    break
+
+                total_fetched += len(aftersales_in_page)
+                logger.info(f"Fetched {len(aftersales_in_page)} aftersale orders on page {page}. Total fetched so far: {total_fetched}")
+
+                # 转换数据
+                for raw_aftersale in aftersales_in_page:
+                    transformed_order = transform_after_sale_order(raw_aftersale)
+                    if transformed_order:
+                        all_aftersale_orders.append(transformed_order)
+                        # 同时提取售后商品项
+                        transformed_items = transform_aftersale_items(raw_aftersale)
+                        if transformed_items:
+                            all_aftersale_items.extend(transformed_items)
+                
+                # 分页逻辑 (假设与订单类似)
+                if len(aftersales_in_page) < page_size:
+                    logger.info("Fetched less aftersale orders than page size, assuming last page.")
+                    break
+                
+                page += 1
+                if page > 500: # Max page limit
+                    logger.warning("Reached maximum page limit (500). Stopping fetch.")
+                    break
+                time.sleep(0.5) # API rate limit
+
+            except (XiaoeAuthError, XiaoeRequestError) as api_error:
+                error_message = f"API error fetching aftersale page {page}: {api_error}"
+                logger.error(error_message, exc_info=True)
+                raise 
+            except Exception as fetch_error:
+                error_message = f"Unexpected error fetching aftersale page {page}: {fetch_error}"
+                logger.error(error_message, exc_info=True)
+                raise
+
+        # 加载数据到数据库
+        if all_aftersale_orders:
+            logger.info(f"Upserting {len(all_aftersale_orders)} transformed aftersale orders...")
+            upsert_aftersale_orders_with_user_lookup(db, all_aftersale_orders)
+        else:
+            logger.info("No new valid aftersale orders to process.")
+
+        if all_aftersale_items:
+            logger.info(f"Replacing {len(all_aftersale_items)} transformed aftersale items...")
+            replace_aftersale_items(db, all_aftersale_items)
+        else:
+            logger.info("No new valid aftersale items to process.")
+
+        # 如果成功，设置状态并更新时间戳 (仅增量模式)
+        sync_status = "success"
+        if not full_sync:
+            new_last_sync_ts = end_sync_dt # 增量同步，下次从本次运行开始时间起
+        # 对于全量，new_last_sync_ts 保留为 start_run_time 或 None
+        logger.info(f"Xiaoe aftersale order sync (mode: {mode}) completed successfully.")
+
+    except Exception as e:
+        sync_status = "failed"
+        if not error_message:
+            error_message = f"Error during aftersale data processing or loading: {e}"
+        logger.error(f"Xiaoe aftersale order sync (mode: {mode}) failed: {error_message}", exc_info=True)
+        # 失败时，增量模式保留上次时间戳
+        if not full_sync:
+            new_last_sync_ts = last_sync_ts
+        else:
+            new_last_sync_ts = None # 全量失败，下次还是全量
+
+    finally:
+        # 更新同步状态表
+        end_run_time = datetime.now(timezone.utc)
+        update_sync_status(db, platform, data_type, mode, 
+                           sync_status, error_message, 
+                           start_run_time, end_run_time, 
+                           new_last_sync_ts)
+        db.close()
+        logger.info(f"Database session closed for aftersale sync (mode: {mode}).")
+
+# --- 主程序入口 ---
 def main():
     # Setup logging first!
     setup_logging()
 
+    # 1. 解析命令行参数
     parser = argparse.ArgumentParser(description="Run Xiaoe data synchronization tasks.")
     parser.add_argument(
         "--sync-type", 
         type=str, 
-        required=True, 
-        choices=['incremental', 'status_update', 'all', 'users', 'products'], # 添加更多类型
-        help="Type of synchronization to perform: 'incremental' for new orders, 'status_update' for recent order statuses, 'all' for both order tasks, 'users', 'products'."
+        choices=["incremental", "status_update", "full_order", "aftersales"], # 添加 'aftersales'
+        required=True,
+        help="Type of sync to perform: \n"
+             "  incremental: Sync new orders since last successful run.\n"
+             "  status_update: Check and update status for recent orders.\n"
+             "  full_order: Perform a full sync of all orders (use with caution!).\n"
+             "  aftersales: Sync aftersale orders (use --full for initial sync)."
     )
-    # 可以添加其他参数，例如 --start-date, --end-date 用于手动指定范围
+    # 添加 --full 标志，主要用于 aftersales 和 full_order
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="Perform a full sync instead of incremental (applies to 'aftersales' and 'full_order')."
+    )
+    # 可以添加其他参数，如日期范围等
+    # parser.add_argument("--start-date", type=str, help="Start date for full sync (YYYY-MM-DD).")
+    # parser.add_argument("--end-date", type=str, help="End date for full sync (YYYY-MM-DD).")
 
     args = parser.parse_args()
 
-    logger.info(f"Starting sync process with type: {args.sync_type}")
+    # 2. 根据参数执行相应的同步函数
+    logger.info(f"Executing sync task with arguments: {args}")
 
-    if args.sync_type == 'incremental':
+    if args.sync_type == "incremental":
         run_incremental_sync()
-    elif args.sync_type == 'status_update':
+    elif args.sync_type == "status_update":
         run_status_update_sync()
-    elif args.sync_type == 'all':
-        logger.info("Running both incremental and status update sync...")
-        run_incremental_sync() # 先增量
-        run_status_update_sync() # 再状态更新
-    elif args.sync_type == 'users':
-        logger.warning("User sync not implemented yet.")
-        # run_user_sync()
-    elif args.sync_type == 'products':
-        logger.warning("Product sync not implemented yet.")
-        # run_product_sync()
+    elif args.sync_type == "full_order":
+        # TODO: 实现全量订单同步逻辑 (run_full_order_sync)
+        logger.warning("Full order sync (run_full_order_sync) is not yet implemented.")
+        # run_full_order_sync(start_date=args.start_date, end_date=args.end_date)
+        pass
+    elif args.sync_type == "aftersales":
+        run_after_sale_sync(full_sync=args.full)
     else:
         logger.error(f"Unknown sync type: {args.sync_type}")
         sys.exit(1)
 
-    logger.info(f"Sync process finished for type: {args.sync_type}")
+    logger.info("Sync task finished.")
 
 if __name__ == "__main__":
     # 可以在这里添加表创建逻辑 (可选, 最好独立)
