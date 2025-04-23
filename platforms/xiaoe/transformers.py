@@ -498,3 +498,446 @@ def transform_aftersale_items(after_sale_data: Dict[str, Any]) -> List[Dict[str,
         items.append(item)
 
     return items 
+
+# --- Helper Functions ---
+
+def safe_int(value: Any) -> Optional[int]:
+    """Safely convert value to int, return None if conversion fails."""
+    if value is None: return None
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        # logger.warning(f"Could not convert {value} to int.") # Avoid excessive logging
+        return None
+
+def safe_decimal(value: Any, divisor: int = 100) -> Optional[Decimal]:
+    """Safely convert value (assumed in cents) to Decimal (in yuan), return None if conversion fails."""
+    num_value = safe_int(value)
+    if num_value is None: return None
+    try:
+        return Decimal(num_value) / Decimal(divisor)
+    except Exception as e:
+        # logger.warning(f"Could not convert {num_value} to Decimal: {e}")
+        return None
+
+def safe_datetime(value: Any) -> Optional[datetime]:
+    """Safely convert string value to datetime, return None if conversion fails."""
+    if not isinstance(value, str) or not value:
+        return None
+    # 尝试常见的日期时间格式
+    formats = [
+        "%Y-%m-%d %H:%M:%S",
+        "%Y/%m/%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d", # 如果只有日期
+    ]
+    for fmt in formats:
+        try:
+            # 尝试去除可能的毫秒或时区信息（简单处理）
+            cleaned_value = value.split('.')[0].split('+')[0].strip()
+            # Ensure the return type is just datetime
+            return datetime.strptime(cleaned_value, fmt)
+        except ValueError:
+            continue
+    # logger.warning(f"Could not parse datetime from string: {value}")
+    return None
+
+def safe_json_dumps(value: Any) -> Optional[str]:
+    """Safely dump list/dict to JSON string, return None on failure."""
+    if value is None: return None
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except (TypeError, ValueError):
+        # logger.warning(f"Could not dump value to JSON: {type(value)}")
+        return None
+
+# --- Main Transformation Functions ---
+
+def transform_order_data(api_order_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Transforms a single order dictionary from the Xiaoe API (get_order_list v1.0.0)
+    into a dictionary structure compatible with the local Order and OrderItem models.
+
+    Args:
+        api_order_data: A dictionary representing a single order from the API response list.
+
+    Returns:
+        A dictionary containing 'order' and 'order_items' keys, or None if input is invalid.
+        'order': Dictionary matching the Order model structure.
+        'order_items': List of dictionaries matching the OrderItem model structure (potentially incomplete).
+    """
+    if not isinstance(api_order_data, dict):
+        logger.warning(f"Invalid input: api_order_data is not a dict. Type: {type(api_order_data)}")
+        return None
+
+    # Extract sub-dictionaries safely
+    buyer_info = api_order_data.get('buyer_info', {})
+    goods_info = api_order_data.get('goods_info', {})
+    order_info = api_order_data.get('order_info', {})
+    payment_info = api_order_data.get('payment_info', {})
+    price_info = api_order_data.get('price_info', {})
+    ship_info = api_order_data.get('ship_info', {})
+
+    # --- Transform Order Data --- 
+    transformed_order = {
+        'platform': 'xiaoe', # Hardcoded for now
+        'order_id': order_info.get('order_id'),
+        'app_id': order_info.get('app_id'),
+        'user_id': buyer_info.get('user_id') or order_info.get('user_id'), # Take user_id from buyer_info first
+
+        # Order Status & Type
+        'order_state': safe_int(order_info.get('order_state')),
+        'pay_state': safe_int(order_info.get('pay_state')),
+        'order_type': safe_int(order_info.get('order_type')),
+        'sub_order_type': safe_int(order_info.get('sub_order_type')),
+        'aftersale_show_state': safe_int(order_info.get('aftersale_show_state')),
+        'settle_state': safe_int(order_info.get('settle_state')),
+        'check_state': safe_int(order_info.get('check_state')),
+        'order_close_type': safe_int(order_info.get('order_close_type')),
+        # 'is_deleted': bool(safe_int(order_info.get('is_deleted'))) if order_info.get('is_deleted') is not None else None, # is_deleted seems missing in doc
+
+        # Price Info (convert cents to yuan Decimal)
+        'actual_fee': safe_decimal(order_info.get('actual_fee')),
+        'goods_original_total_price': safe_decimal(order_info.get('goods_original_total_price')),
+        'discount_amount': safe_decimal(order_info.get('discount_amount')),
+        'freight_actual_price': safe_decimal(order_info.get('freight_actual_price')),
+        'freight_original_price': safe_decimal(order_info.get('freight_original_price')),
+        'modified_amount': safe_decimal(order_info.get('modified_amount')),
+        'deduct_amount': safe_decimal(order_info.get('deduct_amount')),
+        'refund_fee': safe_decimal(order_info.get('refund_fee')),
+
+        # Time Info (convert string to datetime)
+        # TODO: Confirm which field represents the actual creation time if update_time is not sufficient
+        'created_at_platform': safe_datetime(order_info.get('update_time')), # Assuming update_time for now
+        'pay_state_time': safe_datetime(order_info.get('pay_state_time')),
+        'order_state_time': safe_datetime(order_info.get('order_state_time')),
+        'aftersale_show_state_time': safe_datetime(order_info.get('aftersale_show_state_time')),
+        'settle_state_time': safe_datetime(order_info.get('settle_state_time')),
+        'refund_time': safe_datetime(order_info.get('refund_time')),
+        'update_time_platform': safe_datetime(order_info.get('update_time')), # Map API update_time to model update_time_platform
+
+        # Goods Overview
+        'goods_buy_num': safe_int(order_info.get('goods_buy_num')),
+        'goods_name_overview': order_info.get('goods_name'),
+        'goods_spu_type': safe_int(order_info.get('goods_spu_type')),
+        'goods_spu_sub_type': order_info.get('goods_spu_sub_type'),
+
+        # Channel & Source
+        'channel_type': safe_int(order_info.get('channel_type')),
+        'channel_bus_id': order_info.get('channel_bus_id'),
+        'source': safe_int(order_info.get('source')), # source seems missing in doc
+        'wx_app_type': safe_int(order_info.get('wx_app_type')),
+
+        # Relation Info
+        'relation_order_type': safe_int(order_info.get('relation_order_type')),
+        'relation_order_id': order_info.get('relation_order_id'),
+        'relation_order_appid': order_info.get('relation_order_appid'),
+
+        # Payment Info
+        'pay_type': safe_int(order_info.get('pay_type')),
+        'out_order_id_payment': payment_info.get('out_order_id'),
+        'third_order_id': payment_info.get('third_order_id'),
+        'trade_id': order_info.get('trade_id'),
+
+        # Distribution/Activity Info (convert lists to JSON strings)
+        'share_type': safe_int(order_info.get('share_type')),
+        'share_user_id': order_info.get('share_user_id'),
+        'distribute_type_bitmap': safe_json_dumps(order_info.get('distribute_type_bitmap')),
+        'activity_type_bitmap': safe_json_dumps(order_info.get('activity_type_bitmap')),
+
+        # Shipping Info
+        'ship_way_choose_type': safe_int(order_info.get('ship_way_choose_type')),
+        'ship_info': safe_json_dumps(ship_info), # Dump the entire ship_info dict as JSON
+
+        # Remarks
+        'user_comment': buyer_info.get('user_comment'),
+        # 'merchant_remark': None, # API doc doesn't show merchant remark for order list
+
+        # Other
+        'use_collection': safe_int(order_info.get('use_collection')),
+
+        # System fields first_seen_at, last_updated_at will be handled by the database/model defaults
+    }
+
+    # --- Transform Order Item Data --- 
+    transformed_items = []
+    api_goods_list = goods_info.get('goods_list', [])
+    if not isinstance(api_goods_list, list):
+        logger.warning(f"Expected goods_list to be a list, but got {type(api_goods_list)} for order {transformed_order.get('order_id')}")
+        api_goods_list = []
+
+    for item in api_goods_list:
+        if not isinstance(item, dict):
+            logger.warning(f"Skipping invalid item in goods_list (not a dict): {type(item)}")
+            continue
+
+        transformed_item = {
+            'platform': 'xiaoe',
+            'order_id': transformed_order.get('order_id'), # Link to parent order
+            'item_id': item.get('item_id'), # API v1.0 has item_id, v2.0 uses resource_id in list?
+            'resource_id': item.get('resource_id'),
+            'product_id': item.get('spu_id'), # Map spu_id to product_id
+            'resource_type': safe_int(item.get('resource_type')),
+
+            # Goods Info
+            'goods_name': item.get('goods_name'),
+            'goods_image': item.get('goods_image'),
+            'goods_desc': item.get('goods_desc'),
+            'goods_sn': item.get('goods_sn'),
+            'spu_type': item.get('spu_type'),
+
+            # SKU Info
+            'sku_id': item.get('sku_id'),
+            'sku_spec_code': item.get('sku_spec_code'),
+            'goods_spec_desc': item.get('goods_spec_desc'),
+
+            # Quantity & Price (convert cents to yuan Decimal)
+            # !!! IMPORTANT: quantity (num) seems missing from list API response based on doc !!!
+            # We set it to None here. It needs to be filled later, potentially from order details API.
+            'quantity': None,
+            'unit_price': safe_decimal(item.get('unit_price')),
+            'total_price': safe_decimal(item.get('total_price')),
+            'discount_amount': safe_decimal(item.get('discount_amount')),
+            'actual_fee': safe_decimal(item.get('actual_fee')),
+            'discount_detail': safe_json_dumps(item.get('discount_detail')),
+
+            # Validity Period
+            'period_type': safe_int(item.get('period_type')),
+            'expire_desc': item.get('expire_desc'),
+            'expire_start': safe_datetime(item.get('expire_start')),
+            'expire_end': safe_datetime(item.get('expire_end')),
+
+            # Statuses
+            'check_state': safe_int(item.get('check_state')),
+            'check_state_desc': item.get('check_state_desc'),
+            'refund_state': safe_int(item.get('refund_state')),
+            'refund_state_desc': item.get('refund_state_desc'),
+            'ship_state': safe_int(item.get('ship_state')),
+            'ship_state_desc': item.get('ship_state_desc'),
+
+            # Relation Info
+            'relation_goods_id': item.get('relation_goods_id'),
+            'relation_goods_type': safe_int(item.get('relation_goods_type')),
+            'relation_goods_type_desc': item.get('relation_goods_type_desc'),
+
+            # System fields handled by defaults
+        }
+        transformed_items.append(transformed_item)
+
+    # Basic validation: Ensure essential IDs are present
+    if not transformed_order.get('order_id') or not transformed_order.get('user_id'):
+        logger.error(f"Skipping order due to missing order_id or user_id in API data: {api_order_data}")
+        return None
+
+    logger.debug(f"Transformed order {transformed_order.get('order_id')} with {len(transformed_items)} items (items might be incomplete).")
+
+    return {
+        'order': transformed_order,
+        'order_items': transformed_items
+    }
+
+def transform_order_details_data(api_order_detail_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Transforms a single order dictionary from the Xiaoe Order Details API (xe.ecommerce.order.detail/1.0.0)
+    into a dictionary structure compatible with the local Order and OrderItem models.
+    This version specifically handles the detailed response which includes item quantity.
+
+    Args:
+        api_order_detail_data: A dictionary representing the 'data' part of the detail API response.
+
+    Returns:
+        A dictionary containing 'order' and 'order_items' keys, or None if input is invalid.
+        'order': Dictionary matching the Order model structure.
+        'order_items': List of dictionaries matching the OrderItem model structure.
+    """
+    if not isinstance(api_order_detail_data, dict):
+        logger.warning(f"Invalid input: api_order_detail_data is not a dict. Type: {type(api_order_detail_data)}")
+        return None
+
+    # Extract main sections from the detail response
+    order_info = api_order_detail_data.get('order_info', {})
+    buyer_info = api_order_detail_data.get('buyer_info', {})
+    goods_info = api_order_detail_data.get('goods_info', {})
+    # price_info = api_order_detail_data.get('price_info', {}) # price info seems nested within order_info in detail API
+    payment_info = api_order_detail_data.get('payment_info', {})
+    ship_info = api_order_detail_data.get('ship_info', {})
+
+    # --- Transform Order Data (based on detail API structure) ---
+    transformed_order = {
+        'platform': 'xiaoe',
+        'order_id': order_info.get('order_id'),
+        'app_id': order_info.get('app_id'),
+        'user_id': buyer_info.get('user_id') or order_info.get('user_id'),
+
+        # Order Status & Type (Detail API might have slightly different names/availability)
+        'order_state': safe_int(order_info.get('order_state')),
+        'pay_state': safe_int(order_info.get('pay_state')),
+        'order_type': safe_int(order_info.get('order_type')),
+        'sub_order_type': safe_int(order_info.get('sub_order_type')),
+        'aftersale_show_state': safe_int(order_info.get('aftersale_show_state')),
+        'settle_state': safe_int(order_info.get('settle_state')),
+        'check_state': safe_int(order_info.get('check_state')),
+        'order_close_type': safe_int(order_info.get('order_close_type')),
+        # 'is_deleted': bool(safe_int(order_info.get('is_deleted', 0))), # Confirm if 'is_deleted' exists
+
+        # Price Info (from order_info in detail API)
+        'actual_fee': safe_decimal(order_info.get('actual_fee')),
+        'goods_original_total_price': safe_decimal(order_info.get('goods_original_total_price')),
+        'discount_amount': safe_decimal(order_info.get('discount_amount')),
+        'freight_actual_price': safe_decimal(order_info.get('freight_actual_price')),
+        'freight_original_price': safe_decimal(order_info.get('freight_original_price')),
+        'modified_amount': safe_decimal(order_info.get('modified_amount')),
+        'deduct_amount': safe_decimal(order_info.get('deduct_amount')),
+        'refund_fee': safe_decimal(order_info.get('refund_fee')),
+
+        # Time Info
+        'created_at_platform': safe_datetime(order_info.get('created_at')), # Detail uses 'created_at'
+        'pay_state_time': safe_datetime(order_info.get('pay_state_time')),
+        'order_state_time': safe_datetime(order_info.get('order_state_time')),
+        'aftersale_show_state_time': safe_datetime(order_info.get('aftersale_show_state_time')),
+        'settle_state_time': safe_datetime(order_info.get('settle_state_time')),
+        'refund_time': safe_datetime(order_info.get('refund_time')),
+        'update_time_platform': safe_datetime(order_info.get('update_time')), # Detail uses 'update_time'
+
+        # Goods Overview (from order_info)
+        'goods_buy_num': safe_int(order_info.get('goods_buy_num')), # Overall number of items
+        'goods_name_overview': order_info.get('goods_name'),
+        'goods_spu_type': safe_int(order_info.get('goods_spu_type')),
+        'goods_spu_sub_type': order_info.get('goods_spu_sub_type'),
+
+        # Channel & Source (from order_info)
+        'channel_type': safe_int(order_info.get('channel_type')),
+        'channel_bus_id': order_info.get('channel_bus_id'),
+        'source': safe_int(order_info.get('source')),
+        'wx_app_type': safe_int(order_info.get('wx_app_type')),
+
+        # Relation Info (from order_info)
+        'relation_order_type': safe_int(order_info.get('relation_order_type')),
+        'relation_order_id': order_info.get('relation_order_id'),
+        'relation_order_appid': order_info.get('relation_order_appid'),
+
+        # Payment Info (from payment_info and order_info)
+        'pay_type': safe_int(order_info.get('pay_type')),
+        'out_order_id_payment': payment_info.get('out_order_id'),
+        'third_order_id': payment_info.get('third_order_id'),
+        'trade_id': order_info.get('trade_id'),
+
+        # Distribution/Activity Info (from order_info)
+        'share_type': safe_int(order_info.get('share_type')),
+        'share_user_id': order_info.get('share_user_id'),
+        'distribute_type_bitmap': safe_json_dumps(order_info.get('distribute_type_bitmap')),
+        'activity_type_bitmap': safe_json_dumps(order_info.get('activity_type_bitmap')),
+
+        # Shipping Info (from ship_info and order_info)
+        'ship_way_choose_type': safe_int(order_info.get('ship_way_choose_type')),
+        'ship_info': safe_json_dumps(ship_info), # Dump the entire ship_info dict as JSON
+
+        # Remarks (from buyer_info)
+        'user_comment': buyer_info.get('user_comment'),
+        # 'merchant_remark': order_info.get('merchant_remark'), # Check if detail API provides this
+
+        # Other (from order_info)
+        'use_collection': safe_int(order_info.get('use_collection')),
+    }
+
+    # --- Transform Order Item Data (using goods_info from detail API) ---
+    transformed_items = []
+    api_goods_list = goods_info.get('goods_list', [])
+    if not isinstance(api_goods_list, list):
+        logger.warning(f"Expected goods_list to be a list, but got {type(api_goods_list)} for order {transformed_order.get('order_id')}")
+        api_goods_list = []
+
+    for item in api_goods_list:
+        if not isinstance(item, dict):
+            logger.warning(f"Skipping invalid item in goods_list (not a dict): {type(item)}")
+            continue
+
+        # Determine the correct product ID (spu_id or resource_id)
+        product_id = item.get('spu_id') or item.get('resource_id')
+
+        transformed_item = {
+            'platform': 'xiaoe',
+            'order_id': transformed_order.get('order_id'),
+            # Use resource_id as primary item identifier if available, fallback to others?
+            'item_id': item.get('resource_id') or item.get('item_id'), # Assuming resource_id acts as item_id
+            'resource_id': item.get('resource_id'),
+            'product_id': product_id,
+            'resource_type': safe_int(item.get('resource_type')),
+
+            # Goods Info
+            'goods_name': item.get('goods_name'),
+            'goods_image': item.get('goods_image'),
+            'goods_desc': item.get('goods_desc'),
+            'goods_sn': item.get('goods_sn'),
+            'spu_type': item.get('spu_type'),
+
+            # SKU Info
+            'sku_id': item.get('sku_id'),
+            'sku_spec_code': item.get('sku_spec_code'),
+            'goods_spec_desc': item.get('goods_spec_desc'),
+
+            # *** Quantity & Price (from detail API) ***
+            'quantity': safe_int(item.get('quantity')), # Extract quantity here!
+            'unit_price': safe_decimal(item.get('unit_price')),
+            'total_price': safe_decimal(item.get('total_price')),
+            'discount_amount': safe_decimal(item.get('discount_amount')),
+            'actual_fee': safe_decimal(item.get('actual_fee')),
+            'discount_detail': safe_json_dumps(item.get('discount_detail')),
+
+            # Validity Period
+            'period_type': safe_int(item.get('period_type')),
+            'expire_desc': item.get('expire_desc'),
+            'expire_start': safe_datetime(item.get('expire_start')),
+            'expire_end': safe_datetime(item.get('expire_end')),
+
+            # Statuses
+            'check_state': safe_int(item.get('check_state')),
+            'check_state_desc': item.get('check_state_desc'),
+            'refund_state': safe_int(item.get('refund_state')),
+            'refund_state_desc': item.get('refund_state_desc'),
+            'ship_state': safe_int(item.get('ship_state')),
+            'ship_state_desc': item.get('ship_state_desc'),
+
+            # Relation Info
+            'relation_goods_id': item.get('relation_goods_id'),
+            'relation_goods_type': safe_int(item.get('relation_goods_type')),
+            'relation_goods_type_desc': item.get('relation_goods_type_desc'),
+        }
+        # Validate essential item fields? (e.g., product_id, quantity)
+        if transformed_item['product_id'] is None:
+             logger.warning(f"Skipping item in order {transformed_order['order_id']} due to missing product_id (spu_id/resource_id): {item}")
+             continue
+        if transformed_item['quantity'] is None:
+            logger.warning(f"Quantity missing for item {transformed_item['product_id']} in order {transformed_order['order_id']}. Setting quantity to 0.")
+            transformed_item['quantity'] = 0 # Set a default if quantity is unexpectedly missing
+
+        transformed_items.append(transformed_item)
+
+    # Basic validation: Ensure essential IDs are present in the order header
+    if not transformed_order.get('order_id') or not transformed_order.get('user_id'):
+        logger.error(f"Skipping order due to missing order_id or user_id in API detail data: {api_order_detail_data.get('order_info', {}).get('order_id')}")
+        return None
+
+    logger.debug(f"Transformed order details for {transformed_order.get('order_id')} with {len(transformed_items)} items.")
+
+    return {
+        'order': transformed_order,
+        'order_items': transformed_items
+    }
+
+# TODO: Implement transform_user_data(api_user_data: dict) -> dict
+# TODO: Implement transform_product_data(api_product_data: dict) -> dict
+# TODO: Implement transform_aftersale_order_data(api_aftersale_data: dict) -> dict
+
+# Example usage (for testing transformer directly)
+# if __name__ == '__main__':
+#     # Load a sample API response JSON from a file or define it here
+#     sample_api_order = { ... } # Paste a single order object from API doc here
+#     transformed_data = transform_order_data(sample_api_order)
+#     if transformed_data:
+#         import pprint
+#         pp = pprint.PrettyPrinter(indent=2)
+#         print("--- Transformed Order ---")
+#         pp.pprint(transformed_data['order'])
+#         print("--- Transformed Order Items ---")
+#         pp.pprint(transformed_data['order_items']) 

@@ -22,6 +22,11 @@ XIAOE_API_ENDPOINTS = {
     'products': '/xe.goods.list.get/2.0.0',
     'product_detail': '/xe.goods.detail.get/2.0.0',
     'after_sale_orders': '/xe.ecommerce.after_sale.list/1.0.0', # 新增售后列表接口
+    'get_access_token': "/xe.oauth.token/1.0.0",
+    'get_order_list': "/xe.ecommerce.order.list/1.0.0",
+    'get_user_list': "/xe.user.list/1.0.0",
+    'get_goods_list': "/xe.goods.list/1.0.0",
+    'get_order_details': "/xe.ecommerce.order.detail/1.0.0", # Added endpoint
     # 'live_rooms': 'xe.live.list.get/1.0.0' # 直播列表 (如果需要)
 }
 
@@ -90,7 +95,7 @@ class XiaoeClient:
             logger.error(f"Unexpected error getting Xiaoe token: {e}", exc_info=True)
             raise XiaoeRequestError(f"Unexpected error getting token: {e}") from e
 
-    @retry(exceptions=(XiaoeRequestError,), tries=settings.API_RETRY_TIMES, delay=settings.API_RETRY_DELAY_SECONDS)
+    @retry(exceptions=(XiaoeRequestError,), max_tries=settings.API_RETRY_TIMES, delay=settings.API_RETRY_DELAY_SECONDS)
     def _make_request(self, endpoint_key: str, method: str = 'POST', user_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """内部方法：执行 API 请求 (根据官方示例调整)，包含重试逻辑。"""
         token = self._get_access_token()
@@ -376,6 +381,28 @@ class XiaoeClient:
                 logger.error(f"Unexpected error during fetching after-sale orders page {page}: {e}. Stopping pagination.", exc_info=True)
                 break
         logger.info("Finished paginated fetch for after-sale orders.")
+
+    def get_order_details(self, order_id: str) -> Dict:
+        """
+        Fetches the details for a specific order from the Xiaoe API.
+
+        Args:
+            order_id: The ID of the order to fetch details for.
+
+        Returns:
+            A dictionary containing the API response.
+
+        Raises:
+            requests.exceptions.RequestException: If the API request fails after retries.
+            ValueError: If the API response indicates an error.
+        """
+        logger.info(f"Fetching details for order_id: {order_id}")
+        access_token = self._get_access_token()
+        payload = {
+            "access_token": access_token,
+            "order_id": order_id,
+        }
+        return self._make_request("get_order_details", method="POST", data=payload)
 
 # --- 使用示例 (可选) ---
 # if __name__ == '__main__':

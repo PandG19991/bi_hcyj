@@ -8,7 +8,7 @@ from collections import defaultdict
 
 from core.db import get_db, Base # 导入数据库会话获取函数和 Base
 from utils.logger import logger
-from core.models import Order, AftersaleOrder, AftersaleItem # 导入所需模型
+from core.models import Order, AftersaleOrder, AftersaleItem, OrderItem # 导入所需模型
 
 # 定义输入数据的可能类型：字典或 SQLAlchemy 模型实例
 DataItem = Union[Dict[str, Any], Base] # 使用 Union
@@ -92,9 +92,7 @@ def upsert_data(db: Session, model_class: ModelType, data_list: List[DataItem]):
         logger.info(f"UPSERT statement executed for {model_class.__tablename__}. Approx affected rows: {affected_rows}")
         # Note: affected_rows = 1 for insert, 2 for update, 0 for no change.
 
-        # 5. 提交事务
-        db.commit()
-        logger.info(f"Successfully upserted data into {model_class.__tablename__}. Processed {valid_count} items. Transaction committed.")
+        logger.info(f"Successfully executed upsert statement for {model_class.__tablename__}. Processed {valid_count} items. Commit should happen in caller.")
 
     except SQLAlchemyError as e:
         logger.error(f"Database error during upsert into {model_class.__tablename__}: {e}", exc_info=True)
@@ -301,16 +299,78 @@ def replace_aftersale_items(db: Session, aftersale_items_data: List[Dict[str, An
              logger.info("No new AftersaleItem records to insert.")
 
         # 3. 提交事务
-        db.commit()
-        logger.info(f"Successfully replaced AftersaleItem data for {len(aftersale_ids_to_process)} aftersale orders. Transaction committed.")
+        # db.commit()
+        logger.info(f"Successfully executed delete and insert for AftersaleItem data for {len(aftersale_ids_to_process)} aftersale orders. Commit should happen in caller.")
 
     except SQLAlchemyError as e:
         logger.error(f"Database error during replacing AftersaleItem data: {e}", exc_info=True)
-        db.rollback()
-        logger.warning("Transaction rolled back for AftersaleItem replacement.")
-        raise
+
+def upsert_order_with_items(db: Session, order_data: Dict[str, Any], order_items_data: List[Dict[str, Any]]):
+    """
+    Upserts an Order record and replaces its associated OrderItem records.
+
+    This function first upserts the main order details using the generic upsert_data.
+    Then, it deletes all existing OrderItems for that specific order.
+    Finally, it inserts the new list of OrderItems.
+
+    Args:
+        db: SQLAlchemy 数据库会话。
+        order_data: A dictionary representing the Order record.
+        order_items_data: A list of dictionaries representing the OrderItem records.
+    """
+    if not order_data or 'platform' not in order_data or 'order_id' not in order_data:
+        logger.error("Cannot upsert order with items: order_data is invalid or missing platform/order_id.")
+        return # Or raise ValueError?
+
+    platform = order_data['platform']
+    order_id = order_data['order_id']
+
+    try:
+        # Step 1: Upsert the Order record itself
+        logger.debug(f"Upserting Order record for {platform}/{order_id}...")
+        # Use upsert_data for the single order. Ensure it doesn't commit prematurely if called outside a transaction.
+        # Note: upsert_data currently commits inside. For atomicity, it might be better
+        # to extract the core logic or modify upsert_data to optionally not commit.
+        # For MVP, we'll assume the commit inside upsert_data is acceptable, 
+        # although ideally delete+insert should be in the same transaction as order upsert.
+        upsert_data(db, Order, [order_data]) # Pass as a list
+        logger.debug(f"Order record {platform}/{order_id} upserted.")
+
+        # Step 2: Delete existing OrderItems for this order
+        logger.debug(f"Deleting existing OrderItems for order {platform}/{order_id}...")
+        delete_stmt = delete(OrderItem).where(
+            OrderItem.platform == platform,
+            OrderItem.order_id == order_id
+        )
+        delete_result = db.execute(delete_stmt)
+        deleted_count = delete_result.rowcount
+        logger.debug(f"Deleted {deleted_count} existing OrderItem records for order {platform}/{order_id}.")
+        # Need to commit the deletion before inserting new items if upsert_data commits internally
+        # db.commit() # Uncomment if necessary due to upsert_data's internal commit
+
+        # Step 3: Insert new OrderItems if any
+        if order_items_data:
+            logger.debug(f"Inserting {len(order_items_data)} new OrderItems for order {platform}/{order_id}...")
+            # Assuming upsert_data handles bulk insertion correctly
+            # If OrderItem has its own primary key beyond (platform, order_id), upsert is fine.
+            # If only (platform, order_id, some_item_key) is PK, simple insert after delete is better.
+            # Let's use upsert_data for consistency, assuming it handles OrderItem PKs.
+            upsert_data(db, OrderItem, order_items_data)
+            logger.debug(f"New OrderItems for order {platform}/{order_id} inserted/updated.")
+        else:
+            logger.info(f"No new order items provided for order {platform}/{order_id}. Only order record was upserted.")
+
+        # The main transaction commit happens in the calling function (e.g., run_incremental_sync)
+        # However, due to upsert_data's internal commit, atomicity might be compromised.
+        # Consider refactoring upsert_data later.
+        logger.info(f"Successfully processed order {platform}/{order_id} and its items.")
+
+    except SQLAlchemyError as e:
+        logger.error(f"Database error during upsert_order_with_items for order {platform}/{order_id}: {e}", exc_info=True)
+        # Rollback might be handled by the caller's finally block
+        # db.rollback()
+        raise # Re-raise the exception to notify the caller
     except Exception as e:
-        logger.error(f"Unexpected error during replacing AftersaleItem data: {e}", exc_info=True)
-        db.rollback()
-        logger.warning("Transaction rolled back for AftersaleItem replacement.")
+        logger.error(f"Unexpected error during upsert_order_with_items for order {platform}/{order_id}: {e}", exc_info=True)
+        # db.rollback()
         raise
