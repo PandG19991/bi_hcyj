@@ -1,0 +1,1 @@
+# Mark core tests as a package 

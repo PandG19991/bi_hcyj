@@ -1,0 +1,57 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# 项目长期发展与维护策略
+
+## 1. 架构与设计 (Architecture & Design)
+
+*   **起点:** 采用**模块化单体 (Modular Monolith)** 架构 ([src/](mdc:src))，确保清晰的模块边界 (如 `src/xiaoe`, `src/database`, `src/core`)。
+*   **接口抽象:**
+    *   定义统一的平台客户端接口 (`PlatformClient`)，所有具体实现 ([src/xiaoe/client.py](mdc:src/xiaoe/client.py) 等) 遵循此接口。
+    *   定义清晰的数据存储接口 ([src/database/manager.py](mdc:src/database/manager.py))，推荐使用 ORM ([SQLAlchemy](mdc:https:/www.sqlalchemy.org)) 屏蔽数据库差异。
+*   **内部数据模型:** 设计统一的内部数据模型 (Canonical Data Model)，使用 Pydantic 或 dataclasses 定义 ([src/database/models.py](mdc:src/database/models.py) 或 `src/core/models.py`)，各平台数据在客户端层面完成转换。
+*   **幂等性:** 所有数据同步操作必须设计为幂等的，以简化重试和错误恢复。
+*   **未来扩展:**
+    *   考虑引入**消息队列** (如 RabbitMQ, Kafka) 解耦数据获取与处理，提高弹性 (可选，按需引入)。
+    *   模块设计时考虑未来拆分为**微服务**的可能性。
+
+## 2. 开发实践 (Development Practices)
+
+*   **强类型与验证:** 全面使用 Python 类型提示，并用 MyPy 检查；使用 Pydantic 等进行严格的数据验证。
+*   **编码规范:** 遵循 PEP 8，使用 Black 格式化，Flake8/Pylint 检查代码质量。
+*   **设计原则:** 遵循 SOLID 原则，提高代码内聚度和可维护性。
+*   **依赖注入:** 采用依赖注入模式，方便单元测试中 Mock 依赖。
+*   **配置管理:** 敏感信息和环境配置存储在 [config.py](mdc:example/config.py) 或环境变量中，**严禁硬编码**。
+*   **文档:** 使用 Sphinx 等工具基于 docstrings 自动生成文档。
+
+## 3. 测试策略 (Testing Strategy)
+
+*   **分层测试:**
+    *   **单元测试 (Unit Tests):** [tests/](mdc:tests) 目录，高覆盖率，Mock 外部依赖。
+    *   **集成测试 (Integration Tests):** 测试模块间交互，使用**测试数据库**。
+*   **测试数据:** 使用 Fixtures 和 `factory-boy` 等管理测试数据。
+*   **覆盖率:** 使用 `coverage.py` 监控并设定目标。
+*   **持续集成 (CI):** 必须配置 CI 流水线 (如 GitHub Actions)，自动运行检查和测试。
+
+## 4. 运维考量 (Operations / DevOps)
+
+*   **容器化:** 提供 `Dockerfile` 和 `docker-compose.yml`，确保环境一致性。
+*   **基础设施即代码 (IaC):** 使用 Terraform 等管理云资源 (可选)。
+*   **日志:**
+    *   输出**结构化日志** (JSON) 到 stdout/stderr。
+    *   集成**日志聚合系统** (如 ELK, Loki)。
+*   **监控与告警:**
+    *   暴露关键业务和系统**指标** (Metrics)，使用 Prometheus + Grafana 等监控。
+    *   设置必要的**告警**规则。
+*   **配置管理:** 使用环境变量或配置中心管理不同环境配置。
+*   **部署:** 通过 CI/CD 实现自动化部署，考虑蓝绿/金丝雀发布。
+
+## 5. 潜在前端需求 (Potential Frontend)
+
+*   **内部 API:** 如果未来需要管理后台，应考虑设计一个内部 RESTful 或 GraphQL API，并处理好认证授权。
+*   **数据查询接口:** 为前端展示数据设计专门的、优化的查询接口。
+
+遵循这些原则和实践，有助于构建一个健壮、灵活且易于长期维护的数据同步系统。
+

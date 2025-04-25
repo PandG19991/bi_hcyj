@@ -1,0 +1,91 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# 编码规范与代码风格指南 (Python)
+
+本指南旨在统一项目代码风格，提高可读性和可维护性。所有贡献者应遵循以下规范。
+
+  # mkdir -p 在当前的 PowerShell 环境中无法按预期工作
+
+## 1. 代码风格与格式化
+
+*   **基础:** 严格遵循 **PEP 8** ([https://www.python.org/dev/peps/pep-0008/](mdc:https:/www.python.org/dev/peps/pep-0008)) 作为主要的风格指南。
+*   **自动格式化:** **强制**使用 **Black** ([https://github.com/psf/black](mdc:https:/github.com/psf/black)) 对所有 Python 代码进行自动格式化。配置应统一（例如在 `pyproject.toml` 中定义）。
+*   **行长度:** 最大行长度遵循 Black 的默认设置 (通常是 88 个字符)。
+
+## 2. 命名约定 (PEP 8)
+
+*   **模块 (Modules):** `lowercase_with_underscores.py` (例如: `src/xiaoe/client.py`)
+*   **包 (Packages):** `short_lowercase` (例如: `src/core`)
+*   **类 (Classes):** `CapWords` (PascalCase) (例如: `XiaoeClient`, `UserData`)
+*   **函数/方法 (Functions/Methods):** `lowercase_with_underscores` (例如: `fetch_data`, `_parse_response`)
+*   **变量 (Variables):** `lowercase_with_underscores` (例如: `user_id`, `api_key`)
+*   **常量 (Constants):** `ALL_CAPS_WITH_UNDERSCORES` (在模块级别定义) (例如: `API_TIMEOUT = 30`)
+*   **私有成员 (Private Members):** 使用单个前导下划线 (`_private_member`) 表示内部使用，避免使用双下划线 (`__mangled`)，除非确实需要名称修饰。
+
+## 3. 注释与文档字符串
+
+*   **文档字符串 (Docstrings):**
+    *   遵循 **PEP 257** ([https://www.python.org/dev/peps/pep-0257/](mdc:https:/www.python.org/dev/peps/pep-0257))。
+    *   所有公共模块、函数、类和方法**必须**有文档字符串。
+    *   文档字符串应简洁地描述对象的目的。对于函数/方法，应说明其行为、参数、返回值和可能引发的异常。
+    *   推荐使用 Google 或 NumPy 风格的文档字符串格式，以便 Sphinx 等工具解析。
+    *   示例 (Google Style):
+        ```python
+        def fetch_user_data(user_id: int) -> dict:
+            """Fetches user data from the platform API.
+
+            Args:
+                user_id: The unique identifier for the user.
+
+            Returns:
+                A dictionary containing user profile information.
+
+            Raises:
+                ApiError: If the API request fails.
+                ValueError: If the user_id is invalid.
+            """
+            # ... implementation ...
+        ```
+*   **行内注释 (Inline Comments):**
+    *   用于解释代码中**非显而易见**的部分 (即 "Why" 而不是 "What")。
+    *   保持简洁，并与代码保持同步更新。
+    *   避免注释掉代码，应使用版本控制系统管理不再需要的代码。
+
+## 4. 类型提示 (Type Hinting)
+
+*   **强制使用:** 所有新代码的函数/方法签名**必须**包含类型提示 (PEP 484)。鼓励为变量添加类型提示。
+*   **静态检查:** 使用 **MyPy** ([http://mypy-lang.org/](mdc:http:/mypy-lang.org)) 进行类型检查，并集成到 CI 流程中。
+
+## 5. Imports
+
+*   **顺序:** 遵循 PEP 8 建议的顺序：
+    1.  标准库导入 (e.g., `import os`)
+    2.  相关第三方库导入 (e.g., `import requests`)
+    3.  本地应用程序/库特定导入 (e.g., `from src.core import utils`)
+*   **方式:** 优先使用绝对导入。避免使用 `from module import *`。
+*   **组织:** 每个 import 语句应单独一行。
+
+## 6. 错误处理
+
+*   使用具体的异常类型 (例如 `ValueError`, `TypeError`, 自定义异常如 `ApiError`)，避免捕获泛泛的 `Exception`。
+*   提供清晰、有用的错误信息。
+
+## 7. Linters
+
+*   **强制使用:** 使用 **Flake8** ([https://flake8.pycqa.org/](mdc:https:/flake8.pycqa.org)) 或 **Pylint** ([https://www.pylint.org/](mdc:https:/www.pylint.org)) 进行代码质量和风格检查，并集成到 CI 流程中。配置应统一 (例如 `.flake8` 或 `pyproject.toml`)。
+
+## 8. 简单性与可读性
+
+*   遵循 "Zen of Python" (`import this`) 的原则。
+*   优先选择清晰、直接的代码，避免不必要的复杂性和"魔法"。
+*   函数/方法应尽量短小，只做一件事。
+
+## 9. 依赖管理
+
+*   使用 `requirements.txt` 或 `pyproject.toml` (配合 Poetry/PDM) 明确管理依赖。
+*   固定依赖版本以确保构建的可重复性。
+
+

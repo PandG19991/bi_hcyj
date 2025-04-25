@@ -1,0 +1,53 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# 项目结构与开发策略
+
+```
+bi_hcyj/
+├── .cursor/
+│   └── rules/
+│       ├── project-goal-tech-stack.mdc
+│       └── project-structure-dev-strategy.mdc  <-- (本规则文件)
+├── docs/
+│   └── xiaoe_API/
+├── example/
+│   └── [config.py](mdc:example/config.py)          # 配置文件 (API密钥, 数据库凭证等)
+├── src/                      # 主应用代码目录
+│   ├── __init__.py
+│   ├── xiaoe/                # 小鹅通平台模块
+│   │   ├── __init__.py
+│   │   └── [client.py](mdc:src/xiaoe/client.py) # 小鹅通API客户端
+│   ├── douyin/               # 抖音平台模块
+│   │   └── ...
+│   ├── wechat_channels/      # 视频号平台模块
+│   │   └── ...
+│   ├── database/             # 数据库交互模块
+│   │   ├── __init__.py
+│   │   ├── [models.py](mdc:src/database/models.py) # 数据模型 (建议使用ORM如SQLAlchemy)
+│   │   └── [manager.py](mdc:src/database/manager.py) # 数据库操作封装
+│   ├── core/                 # 核心/通用模块
+│   │   ├── __init__.py
+│   │   └── [utils.py](mdc:src/core/utils.py)  # 通用工具函数、常量等
+│   └── [main.py](mdc:src/main.py)           # 主执行脚本/同步逻辑
+├── tests/                    # 测试代码目录
+├── [requirements.txt](mdc:requirements.txt)      # Python 依赖列表
+└── README.md
+```
+
+## 核心开发原则
+
+1.  **模块化:**
+    *   为每个数据源平台创建独立的 API 客户端 (`client.py`)。
+    *   数据库交互逻辑封装在 `database` 模块中，推荐使用 ORM。
+    *   通用功能放入 `core` 模块。
+2.  **配置分离:** 将敏感信息和环境配置放在 [config.py](mdc:example/config.py) 或环境变量中。
+3.  **清晰的同步逻辑:** 在 [src/main.py](mdc:src/main.py) 中编排数据获取、处理和存储的流程。
+4.  **错误处理与日志:** 实现健壮的错误处理，并使用 `logging` 模块记录详细日志。
+5.  **依赖管理:** 使用 [requirements.txt](mdc:requirements.txt) 管理项目依赖。
+
+遵循这些建议有助于构建一个结构清晰、易于维护和扩展的应用。
+
+

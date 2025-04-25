@@ -1,96 +1,78 @@
-# 多平台 BI 数据同步系统 (MVP - 小鹅通)
+# BI 数据同步项目 (小鹅通)
 
-本项目旨在将小鹅通平台的订单、用户、商品数据同步到 MySQL 数据库，并特别关注订单创建后 14 天内的状态更新，以满足业务需求。
+本项目用于从小鹅通平台同步用户、订单、售后和商品数据到本地数据库 (MySQL)。
 
-## 功能特性 (MVP)
+## 设置步骤
 
-*   同步小鹅通订单、用户、商品核心数据至 MySQL。
-*   定期检查并更新近期（默认 15 天内）订单的状态。
-*   基于时间戳的增量同步。
-*   基本的错误处理和 API 调用重试。
-*   支持在宝塔面板通过计划任务运行。
-*   提供基础的文件日志记录。
+1.  **创建虚拟环境:**
+    ```bash
+    python -m venv .venv
+    # Windows
+    .\.venv\Scripts\activate
+    # macOS/Linux
+    # source ./.venv/bin/activate
+    ```
 
-## 技术栈
+2.  **安装依赖:**
+    ```bash
+    pip install -r requirements.txt
+    ```
 
-*   Python 3.9+ (本项目使用 Python 3.12 测试通过)
-*   MySQL 5.7.44+ (兼容，但推荐使用 MySQL 8.0+)
-*   SQLAlchemy ~=1.4 (ORM)
-*   Requests (HTTP 请求)
-*   python-dotenv (配置管理)
+3.  **配置环境变量:**
+    *   复制 `.env.example` 文件为 `.env`。
+    *   在 `.env` 文件中填入你的小鹅通 API 凭证:
+        ```dotenv
+        XIAOE_APP_ID=你的AppID
+        XIAOE_CLIENT_ID=你的ClientID
+        XIAOE_SECRET_KEY=你的SecretKey
+        ```
+    *   填入你的 MySQL 数据库连接信息:
+        ```dotenv
+        MYSQL_USER=你的数据库用户名
+        MYSQL_PASSWORD=你的数据库密码
+        MYSQL_HOST=你的数据库主机地址 (例如 localhost)
+        MYSQL_PORT=你的数据库端口 (例如 3306)
+        MYSQL_DB_NAME=你的数据库名称
+        ```
+    *   (可选) 配置同步时间范围和日志级别:
+        ```dotenv
+        # 拉取最近多少天的订单数据 (默认 1)
+        SYNC_ORDERS_DAYS_BACK=1 
+        # 拉取最近多少天的售后数据 (默认 1)
+        SYNC_AFTERSALES_DAYS_BACK=1 
+        # 日志级别 (DEBUG, INFO, WARNING, ERROR, CRITICAL, 默认 INFO)
+        LOG_LEVEL=DEBUG 
+        ```
+
+4.  **(首次运行或模型更改后) 应用数据库迁移:**
+    ```bash
+    alembic upgrade head
+    ```
+
+## 运行同步
+
+```bash
+python -m src.main
+```
+
+日志将输出到控制台和项目根目录下的 `sync.log` 文件。
 
 ## 项目结构
 
 ```
-/data_sync/
-├── config/           # 配置目录 (.env, config.py)
-├── core/             # 核心逻辑 (db, loaders, models)
-├── platforms/xiaoe/  # 小鹅通模块 (client, transformers)
-├── utils/            # 工具 (logger, retry)
-├── logs/             # 日志输出目录
-├── scripts/          # 入口脚本 (sync_xiaoe.py)
-├── requirements.txt  # 依赖
-├── README.md         # 本文档
-└── docs/             # 其他文档 (database, config, deployment)
-```
-
-## 快速开始
-
-**1. 克隆仓库:**
-
-```bash
-git clone <your-repository-url>
-cd data_sync
-```
-
-**2. 配置环境:**
-
-*   参考 `docs/config.md` 创建并编辑 `config/.env` 文件，填入数据库连接信息和小鹅通 API Key/Secret。
-*   确保已安装 Python 3.9+ (推荐 3.12) 和 MySQL 5.7.44+。
-
-**3. 安装依赖:**
-
-```bash
-# 建议使用 Python 3.12
-py -3.12 -m pip install -r requirements.txt
-py -3.12 -m pip install pymysql # 确保驱动已安装
-```
-
-**4. 初始化数据库:**
-
-*   手动连接到你的 MySQL 数据库 (支持 5.7.44+)。
-*   执行 `docs/database.md` 中的 SQL 语句来创建所需的表。
-
-**5. 手动运行同步 (用于测试):**
-
-```bash
-# 运行增量同步 (拉取新订单)
-py -3.12 scripts/sync_xiaoe.py --sync-type incremental
-
-# 运行状态更新 (更新近期订单状态)
-py -3.12 scripts/sync_xiaoe.py --sync-type status_update
-
-# 注意：首次运行建议先运行 incremental，再运行 status_update
-```
-
-**6. 部署到宝塔面板:**
-
-*   参考 `docs/deployment.md` 进行部署和配置计划任务。
-
-## 文档
-
-*   [数据库 Schema](./docs/database.md)
-*   [配置说明](./docs/config.md)
-*   [部署指南](./docs/deployment.md)
-
-## 日志
-
-*   日志文件默认输出到项目根目录下的 `logs/` 文件夹中。
-*   可在 `config/.env` 文件中通过 `LOG_LEVEL` 变量调整日志级别。
-
-## 注意事项
-
-*   请务必保护好 `config/.env` 文件中的敏感信息。
-*   定期检查日志文件，关注 `ERROR` 或 `CRITICAL` 级别的日志。
-*   根据小鹅通 API 的限制调整同步频率和请求逻辑。
-*   本项目代码已在 Python 3.12 和 MySQL 8.0 环境下测试通过，并确认兼容 MySQL 5.7.44+。
+bi_hcyj/
+├── alembic/            # Alembic 数据库迁移配置和版本
+├── src/                # 主应用代码目录
+│   ├── xiaoe/          # 小鹅通平台模块 (API 客户端)
+│   ├── database/       # 数据库交互模块 (模型, 管理器)
+│   ├── core/           # 核心/通用模块 (配置, 日志, 转换器)
+│   └── main.py         # 主执行脚本/同步逻辑
+├── tests/              # 测试代码目录 (待完善)
+├── .env.example        # 环境变量示例文件
+├── .env                # 环境变量文件 (请勿提交到版本库)
+├── requirements.txt    # Python 依赖列表
+├── alembic.ini         # Alembic 配置文件
+├── pytest.ini          # Pytest 配置文件
+├── sync.log            # 日志文件
+└── README.md           # 项目说明 (本文件)
+``` 

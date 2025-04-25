@@ -1,0 +1,29 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# 项目目标与技术栈
+
+本项目旨在通过调用小鹅通 (XiaoeTech), 抖音 (Douyin), 视频号 (WeChat Channels) 等平台的 API 来获取数据。
+
+获取到的数据将被同步到部署在云服务器上的数据库中。
+
+主要使用的技术栈和组件包括：
+- **数据来源平台 API:**
+    - 小鹅通 (XiaoeTech)
+    - 抖音 (Douyin)
+    - 视频号 (WeChat Channels)
+    - (其他可能的平台)
+- **数据库:**
+    - MySQL (版本 5.7.44)
+- **相关配置文件:** 可能包含 API 密钥或数据库凭证，例如 [example/config.py](mdc:example/config.py)
+- **API 文档/代码:** 关于小鹅通 API 的信息可能位于 [docs/xiaoe_API/](mdc:docs/xiaoe_API) 目录。
+
+**核心任务:**
+1.  调用各平台 API 获取所需数据。
+2.  处理和转换获取的数据。
+3.  将处理后的数据写入对应的 MySQL 数据库表中。
+
+
+

@@ -1,7 +1,18 @@
-﻿greenlet==3.2.0
-PyMySQL==1.1.1
-python-dotenv==1.1.0
-SQLAlchemy==2.0.40
-typing_extensions==4.13.2
-requests==2.31.0
-loguru==0.7.3
+# Project dependencies will be listed here
+# Example:
+# requests>=2.20.0
+# SQLAlchemy>=1.4.0
+# pydantic>=1.9.0
+
+python-dotenv>=0.19.0
+requests>=2.26.0
+
+# Database
+SQLAlchemy>=2.0.0 # Use modern SQLAlchemy 2.x
+psycopg2-binary>=2.9.0 # PostgreSQL Driver
+mysql-connector-python>=8.0.0 # MySQL Driver
+alembic>=1.7.0 # Database migration tool
+
+# Testing
+pytest>=7.0.0
+pytest-mock>=3.0.0 
