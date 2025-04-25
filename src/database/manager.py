@@ -1,12 +1,13 @@
-from sqlalchemy import create_engine, insert, delete
+from sqlalchemy import create_engine, insert, delete, update
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.dialects.mysql import insert as mysql_insert # Import specific MySQL insert
 from contextlib import contextmanager
-from typing import List, Dict, Any, Generator, Type
+from typing import List, Dict, Any, Generator, Type, Optional
+import datetime # Added datetime
 
 from src.core.config import settings, get_mysql_database_url
 from src.core.logger import logger
-from src.database.models import Base, XiaoeUser, XiaoeGoods, XiaoeOrder, XiaoeOrderItem, XiaoeAftersale, XiaoeAftersaleItem # Import Base and specific models as needed
+from src.database.models import Base, XiaoeUser, XiaoeGoods, XiaoeOrder, XiaoeOrderItem, XiaoeAftersale, XiaoeAftersaleItem, SyncState # Import Base and specific models as needed
 
 # --- Database Setup ---
 
@@ -201,4 +202,47 @@ def upsert_aftersale_items(db: Session, items_data: List[Dict[str, Any]]) -> int
     except Exception as e:
         logger.error(f"Error during aftersale item delete/insert: {e}", exc_info=True)
         # Rollback is handled by get_db
+        raise
+
+# --- Sync State Management Functions ---
+
+def get_sync_state(db: Session, sync_type: str) -> Optional[SyncState]:
+    """Retrieves the sync state record for a given sync type."""
+    try:
+        state = db.query(SyncState).filter(SyncState.sync_type == sync_type).first()
+        if state:
+            logger.debug(f"Retrieved sync state for '{sync_type}': {state}")
+        else:
+            logger.info(f"No existing sync state found for '{sync_type}'. Will start from beginning.")
+        return state
+    except Exception as e:
+        logger.error(f"Error retrieving sync state for '{sync_type}': {e}", exc_info=True)
+        return None
+
+def update_sync_state(db: Session, sync_type: str, **kwargs):
+    """Updates or creates the sync state record for a given sync type."""
+    kwargs['last_updated_at'] = datetime.datetime.now()
+    
+    try:
+        existing_state = db.query(SyncState).filter(SyncState.sync_type == sync_type).first()
+        
+        if existing_state:
+            # Use SQLAlchemy ORM update approach which is generally safer
+            for key, value in kwargs.items():
+                setattr(existing_state, key, value)
+            logger.debug(f"Updating sync state for '{sync_type}'. Values: {kwargs}")
+            # ORM object is automatically part of the session's transaction
+        else:
+            # Insert new record
+            kwargs['sync_type'] = sync_type
+            new_state = SyncState(**kwargs)
+            db.add(new_state)
+            logger.info(f"Creating new sync state for '{sync_type}'. Values: {kwargs}")
+            
+        # Flush changes to DB within the current transaction managed by get_db
+        db.flush()
+        logger.debug(f"Flushed session after updating/creating sync state for '{sync_type}'.")
+
+    except Exception as e:
+        logger.error(f"Error updating/creating sync state for '{sync_type}': {e}", exc_info=True)
         raise
