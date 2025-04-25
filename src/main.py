@@ -39,7 +39,7 @@ def sync_xiaoe_users():
     page_count = 0
     es_skip = None
     page_size = 50 # Increased page size
-    # max_pages_to_fetch = 20 # Reduced page limit # REMOVED PAGE LIMIT
+    max_pages_to_fetch = 10 # Restore page limit for testing
 
     # --- Get initial state ---
     try:
@@ -60,22 +60,22 @@ def sync_xiaoe_users():
         logger.info("XiaoeClient initialized successfully for user sync.")
 
         while True:
-            # === REMOVED Test Limit Check ===
-            # if page_count >= max_pages_to_fetch: # Use >= to fetch exactly 10 pages (1 to 10)
-            #     logger.info(f"Reached the test limit of {max_pages_to_fetch} pages for user sync. Stopping.")
-            #     break
-            # =======================
+            # === Restore Test Limit Check ===
+            if page_count >= max_pages_to_fetch: # Use >= to fetch exactly limit pages
+                logger.info(f"Reached the test limit of {max_pages_to_fetch} pages for user sync. Stopping.")
+                break
+            # ========================
 
             page_count += 1
             # Adjusted log message
             logger.info(f"Attempting to fetch user page {page_count} (page_size={page_size}). Cursor: {es_skip}")
-
+            
             # Fetch data using the current es_skip
             user_data = client.get_users_list(page_size=page_size, es_skip=es_skip)
             user_list = user_data.get('list', [])
             total_api_reported = user_data.get('total', 0) # Note: total might not be accurate with cursor
             batch_size = len(user_list)
-            total_processed += batch_size
+            total_processed += batch_size 
             logger.info(f"Fetched page {page_count}: {batch_size} users retrieved. Total processed this run: {total_processed}.")
 
             if not user_list:
@@ -84,7 +84,7 @@ def sync_xiaoe_users():
                 # (Status update will be handled in the main execution block)
                 break
 
-            # --- Processing Batch ---
+            # --- Processing Batch ---            
             logger.debug(f"Transforming batch of {batch_size} users for page {page_count}...")
             transformed_users = []
             for raw_user in user_list:
@@ -126,14 +126,14 @@ def sync_xiaoe_users():
 
             logger.debug(f"Finished processing batch for page {page_count}.")
             # ------------------------
-
+            
             # Prepare for the next iteration
             es_skip = next_es_skip # Use the cursor obtained before the DB operation
 
             if not es_skip: # Should be redundant if break worked
                  logger.warning("Stopping user sync because next cursor is missing.")
                  break
-
+                 
             time.sleep(0.1) # Keep optional delay
 
     except XiaoeError as e:
@@ -159,7 +159,7 @@ def sync_xiaoe_orders(days_back=1):
     current_page = 1
     page_size = 50 # Increased page size
     run_max_timestamp = None
-    # max_pages_to_fetch = 20 # Reduced page limit # REMOVED PAGE LIMIT
+    max_pages_to_fetch = 10 # Restore page limit for testing
 
     # Calculate time range - RESTORED ORIGINAL LOGIC
     end_time_dt = datetime.datetime.now()
@@ -176,11 +176,11 @@ def sync_xiaoe_orders(days_back=1):
         logger.info("XiaoeClient initialized successfully for order sync.")
 
         while True:
-            # === REMOVED Test Limit Check ===
-            # if page_count >= max_pages_to_fetch:
-            #     logger.info(f"Reached the test limit of {max_pages_to_fetch} pages for order sync. Stopping.")
-            #     break
-            # =======================
+            # === Restore Test Limit Check ===
+            if page_count >= max_pages_to_fetch:
+                logger.info(f"Reached the test limit of {max_pages_to_fetch} pages for order sync. Stopping.")
+                break
+            # ========================
 
             page_count += 1
             # Adjusted log message to remove max_pages reference
@@ -277,10 +277,10 @@ def sync_xiaoe_aftersales(days_back=1):
     total_aftersales_upserted = 0
     total_items_processed = 0
     page_count = 0
-    current_page_index = 1
-    page_size = 50
+    current_page_index = 1 
+    page_size = 50 
     run_max_timestamp = None
-    # max_pages_to_fetch = 20 # Reduced page limit
+    max_pages_to_fetch = 10 # Restore page limit for testing
 
     # --- Determine Time Range --- RESTORED ORIGINAL LOGIC
     start_time_dt = None
@@ -296,7 +296,7 @@ def sync_xiaoe_aftersales(days_back=1):
                 logger.info(f"No previous aftersale sync timestamp found. Starting from {days_back} day(s) ago: {start_time_dt.strftime('%Y-%m-%d %H:%M:%S')}")
     except Exception as e:
         logger.error(f"Failed to retrieve initial sync state for {sync_type}. Falling back to {days_back} days back. Error: {e}", exc_info=True)
-        start_time_dt = end_time_dt - datetime.timedelta(days=days_back)
+    start_time_dt = end_time_dt - datetime.timedelta(days=days_back)
 
     start_time_str = start_time_dt.strftime("%Y-%m-%d %H:%M:%S")
     end_time_str = end_time_dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -311,13 +311,13 @@ def sync_xiaoe_aftersales(days_back=1):
         logger.info("XiaoeClient initialized successfully for aftersale sync.")
 
         while True:
-            # === REMOVED Test Limit Check ===
-            # if page_count >= max_pages_to_fetch:
-            #     logger.info(f"Reached the test limit of {max_pages_to_fetch} pages for aftersale sync. Stopping.")
-            #     break
-            # =======================
+            # === Restore Test Limit Check ===
+            if page_count >= max_pages_to_fetch:
+                logger.info(f"Reached the test limit of {max_pages_to_fetch} pages for aftersale sync. Stopping.")
+                break
+            # ========================
 
-            page_count += 1
+            page_count += 1 
             # Adjusted log message
             logger.info(f"Attempting to fetch aftersale page index {current_page_index} (Run page {page_count}, page_size={page_size}) for time range...")
 
@@ -337,34 +337,72 @@ def sync_xiaoe_aftersales(days_back=1):
 
             if not aftersale_list:
                 logger.info(f"Received empty aftersale list on page index {current_page_index}, assuming end of data for this time range.")
-                break
+                break 
+
+            # --- Add Transformation Logic Here ---
+            transformed_aftersales = []
+            transformed_aftersale_items = []
+            for raw_aftersale in aftersale_list:
+                transformed = transform_aftersale(raw_aftersale)
+                if transformed:
+                    # Separate items before adding aftersale to list
+                    items = transformed.pop('aftersale_items', []) 
+                    transformed_aftersales.append(transformed)
+                    if items:
+                        transformed_aftersale_items.extend(items)
+                    # Keep track of the latest timestamp seen in this batch for state update
+                    if 'updated_at' in transformed and isinstance(transformed['updated_at'], datetime.datetime):
+                         if run_max_timestamp is None or transformed['updated_at'] > run_max_timestamp:
+                             run_max_timestamp = transformed['updated_at']
+                    logger.debug(f"Successfully transformed aftersale ID: {transformed.get('aftersale_id')}")
+                else:
+                    logger.warning(f"Failed to transform aftersale record: {raw_aftersale.get('aftersale_id')}")
+            # --- End Transformation Logic ---
 
             # --- Processing Batch --- RESTORED BATCH LOGIC ---
             if transformed_aftersales:
+                # Initialize counts for this batch
+                upserted_count_batch = 0
+                items_processed_batch = 0
                 try:
                     with get_db() as db:
-                        # Restore batch upsert for aftersales
-                        upserted_count = upsert_aftersales(db, transformed_aftersales)
-                        total_aftersales_upserted += upserted_count
-                        logger.info(f"Attempted to upsert {len(transformed_aftersales)} aftersales for page {current_page_index}. Upserted count: {upserted_count}.")
+                        try:
+                            # Attempt to upsert aftersales
+                            upserted_count_batch = upsert_aftersales(db, transformed_aftersales)
+                            total_aftersales_upserted += upserted_count_batch
+                            logger.info(f"Attempted to upsert {len(transformed_aftersales)} aftersales for page {current_page_index}. DB upsert count: {upserted_count_batch}.")
 
-                        db.flush() # Flush aftersales before items
-                        logger.debug(f"Flushed session after upserting aftersales for page {current_page_index}.")
+                            db.flush() # Flush aftersales before items - This might trigger the FK error
+                            logger.debug(f"Flushed session after upserting aftersales for page {current_page_index}.")
 
-                        # Restore batch upsert for items
-                        if transformed_aftersale_items:
-                            processed_items_count = upsert_aftersale_items(db, transformed_aftersale_items)
-                            total_items_processed += processed_items_count
-                            logger.info(f"Processed {processed_items_count} aftersale items for page {current_page_index}.")
-                        else:
-                            logger.info(f"No aftersale items to process for page {current_page_index}.")
+                            # Restore batch upsert for items - Only if aftersales flush succeeded
+                            if transformed_aftersale_items:
+                                items_processed_batch = upsert_aftersale_items(db, transformed_aftersale_items)
+                                total_items_processed += items_processed_batch
+                                logger.info(f"Processed {items_processed_batch} aftersale items for page {current_page_index}.")
+                            else:
+                                logger.info(f"No aftersale items to process for page {current_page_index}.")
 
-                        # DO NOT update timestamp state here - done at the end
+                        except IntegrityError as ie:
+                             # Catch foreign key errors specifically (order_id likely missing in fact_xiaoe_order)
+                             # Log a warning but allow the sync process to continue with the next batch/task.
+                             # We lose the data for this batch, but the overall sync doesn't halt.
+                             db.rollback() # Rollback the transaction for this failed batch
+                             logger.warning(f"Skipping aftersales batch for page {current_page_index} due to IntegrityError (likely missing order_id in parent table). Error: {ie}", exc_info=False) # Log warning, don't need full traceback here usually
+                             # Reset batch counts as this batch failed
+                             total_aftersales_upserted -= upserted_count_batch 
+                             # No need to adjust total_items_processed as item upsert was skipped
 
-                except Exception as db_err:
-                    # Log the error and re-raise to fail the task
-                    logger.error(f"Database error during batch aftersale/item upsert for page {current_page_index}. Stopping sync. Error: {db_err}", exc_info=True)
-                    raise # Re-raise to mark task as failed
+                        except Exception as db_err:
+                            # Catch other potential DB errors during this batch
+                            db.rollback() # Rollback the transaction
+                            logger.error(f"Database error during batch aftersale/item upsert for page {current_page_index}. Error: {db_err}", exc_info=True)
+                            raise # Re-raise other critical DB errors to stop the sync
+
+                except Exception as outer_err:
+                    # Catch errors like failing to get a DB connection
+                    logger.error(f"Failed to process aftersales batch for page {current_page_index} due to outer error: {outer_err}", exc_info=True)
+                    raise # Re-raise critical errors
 
             # --- REMOVED Individual Processing Block ---
 
@@ -410,7 +448,7 @@ def sync_xiaoe_goods():
     current_page = 1 # Page number to request from API
     page_size = 100 # Set back to API max limit
     start_page = 1 # Initialize start page
-    # max_pages_to_fetch = 20 # Reduced page limit # REMOVED PAGE LIMIT
+    max_pages_to_fetch = 10 # Restore page limit for testing
 
     # --- Get initial state ---
     try:
@@ -439,15 +477,15 @@ def sync_xiaoe_goods():
         logger.info("XiaoeClient initialized successfully for goods sync.")
 
         while True:
-            # === REMOVED Test Limit Check (Based on pages fetched *this run*) ===
-            # if page_count >= max_pages_to_fetch:
-            #     logger.info(f"Reached the test limit of {max_pages_to_fetch} pages for goods sync. Stopping.")
-            #     break
-            # =======================
+            # === Restore Test Limit Check (Based on pages fetched *this run*) ===
+            if page_count >= max_pages_to_fetch:
+                logger.info(f"Reached the test limit of {max_pages_to_fetch} pages for goods sync. Stopping.")
+                break
+            # ========================
 
             # Note: page_count tracks pages attempted *in this run* starting from 1
             # current_page tracks the actual API page number being requested
-            page_count += 1
+            page_count += 1 
             # Adjusted log message
             logger.info(f"Attempting to fetch goods list page {current_page} (Run page {page_count}, page_size={page_size})...")
 
@@ -466,9 +504,9 @@ def sync_xiaoe_goods():
             if not goods_list:
                 logger.info(f"Received empty goods list on page {api_current_page}, assuming end of data.")
                 # Successfully reached the end
-                break
+                break 
 
-            # --- Processing Batch ---
+            # --- Processing Batch ---            
             logger.debug(f"Transforming batch of {batch_size} goods for page {api_current_page}...")
             transformed_goods = []
             for raw_goods in goods_list:
@@ -514,85 +552,52 @@ def sync_xiaoe_goods():
     # Overall success/failure status logged in main block
 
 
-# --- Main Execution ---
+def main():
+    """Main function to orchestrate the synchronization process."""
+    setup_logger() # Ensure logger is configured
+    logger.info("Starting data synchronization run...")
+
+    sync_start_time = time.time()
+    tasks_completed = 0
+    tasks_failed = 0
+
+    # Define the order of synchronization tasks
+    # IMPORTANT: Goods must be synced before orders/aftersales due to foreign keys
+    sync_tasks = [
+        ("Goods", sync_xiaoe_goods),
+        ("Users", sync_xiaoe_users),
+        ("Orders", lambda: sync_xiaoe_orders(days_back=1)), # Use lambda if function needs args
+        ("Aftersales", lambda: sync_xiaoe_aftersales(days_back=1)),
+    ]
+
+    for task_name, task_func in sync_tasks:
+        logger.info(f"--- Running Task: {task_name} ---")
+        task_start_time = time.time()
+        try:
+            task_func()
+            logger.info(f"--- Task '{task_name}' completed successfully. ---")
+            tasks_completed += 1
+        except Exception as e:
+            logger.error(f"--- Task '{task_name}' failed: {e} ---", exc_info=True)
+            tasks_failed += 1
+            # Decide if you want to stop on failure or continue with other tasks
+            # break # Uncomment to stop immediately on first failure
+
+        task_duration = time.time() - task_start_time
+        logger.info(f"Task '{task_name}' duration: {task_duration:.2f} seconds.")
+
+    sync_duration = time.time() - sync_start_time
+    logger.info(f"Synchronization run finished.")
+    logger.info(f"Total duration: {sync_duration:.2f} seconds.")
+    logger.info(f"Tasks completed: {tasks_completed}, Tasks failed: {tasks_failed}")
+
+    if tasks_failed > 0:
+        logger.error("One or more synchronization tasks failed.")
+        # Potentially exit with a non-zero status code if run as a script
+        # sys.exit(1)
+
 
 if __name__ == "__main__":
     # Load environment variables from .env file
-    load_dotenv()
-
-    # Setup logger
-    setup_logger(log_level_str="DEBUG", log_file="sync.log")
-
-    # Read configuration from environment variables with defaults
-    try:
-        orders_days_back = int(os.getenv("SYNC_ORDERS_DAYS_BACK", 1))
-    except (ValueError, TypeError):
-        logger.warning("Invalid or missing SYNC_ORDERS_DAYS_BACK env variable, defaulting to 1.")
-        orders_days_back = 1
-
-    try:
-        aftersales_days_back = int(os.getenv("SYNC_AFTERSALES_DAYS_BACK", 1))
-    except (ValueError, TypeError):
-        logger.warning("Invalid or missing SYNC_AFTERSALES_DAYS_BACK env variable, defaulting to 1.")
-        aftersales_days_back = 1
-
-    # Initialize database tables
-    try:
-        from src.database.manager import create_all_tables
-        logger.info("Initializing database tables if they don't exist...")
-        create_all_tables()
-        logger.info("Database table initialization check complete.")
-    except Exception as init_db_err:
-        logger.critical(f"Failed to initialize database tables: {init_db_err}", exc_info=True)
-        exit(1)
-
-    logger.info("Starting data synchronization overall process...")
-
-    # Define sync tasks with their type names for state management
-    sync_tasks = [
-        {'name': "Users", 'type': 'users', 'func': sync_xiaoe_users},
-        {'name': "Orders", 'type': 'orders', 'func': lambda: sync_xiaoe_orders(days_back=orders_days_back)},
-        {'name': "Aftersales", 'type': 'aftersales', 'func': lambda: sync_xiaoe_aftersales(days_back=aftersales_days_back)},
-        {'name': "Goods", 'type': 'goods', 'func': sync_xiaoe_goods}
-    ]
-
-    overall_success = True
-    for task in sync_tasks:
-        task_name = task['name']
-        task_type = task['type']
-        sync_func = task['func']
-        task_status = 'failed' # Default to failed unless explicitly successful
-
-        try:
-            logger.info(f"--- Running {task_name} Synchronization --- ")
-            # Optionally mark as 'running' at the start
-            # with get_db() as db:
-            #     update_sync_state(db, task_type, last_run_status='running')
-
-            sync_func() # Execute the sync function
-
-            # If no exception occurred, mark as success
-            task_status = 'success'
-            logger.info(f"--- Finished {task_name} Synchronization Successfully --- ") # Added space
-
-        except Exception as sync_err:
-            logger.error(f"!!! Error during {task_name} Synchronization: {sync_err}", exc_info=True)
-            logger.error(f"--- {task_name} Synchronization FAILED --- ")
-            overall_success = False
-            # task_status remains 'failed'
-
-        finally:
-            # Update the final status in the sync_state table
-            try:
-                with get_db() as db:
-                    # Note: We update status regardless of success/failure of the task itself.
-                    # The specific timestamp/page/cursor updates happen *within* the sync functions upon *their* success.
-                    update_sync_state(db, task_type, last_run_status=task_status)
-                    logger.info(f"Updated final run status for {task_name} ({task_type}) to '{task_status}'.")
-            except Exception as state_update_err:
-                 logger.error(f"!!! CRITICAL: Failed to update final run status for {task_name} ({task_type}) to '{task_status}'. Error: {state_update_err}", exc_info=True)
-                 # If updating the status fails, we might have inconsistent state
-
-    logger.info("Data synchronization overall process finished.")
-    if not overall_success:
-        logger.warning("One or more synchronization tasks failed. Please check the logs above for details.") 
+    load_dotenv() # Make sure this is called before client initialization
+    main() 

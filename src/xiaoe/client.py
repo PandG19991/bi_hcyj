@@ -327,14 +327,14 @@ class XiaoeClient:
         Returns:
             A dictionary containing the list of goods and pagination info.
             Example: {'current_page': 1, 'list': [...], 'total': 46598}
-        
+
         Raises:
             XiaoeError: If the API request fails.
             ValueError: If page_size is invalid.
         """
         # Updated API path based on docs/xiaoe_API/get_goods_relations.md
         api_path = "xe.goods.list.get/4.0.0" 
-        
+
         # API doc says max 100, default 10
         if not 1 <= page_size <= 100:
              raise ValueError("page_size must be between 1 and 100")
@@ -345,7 +345,7 @@ class XiaoeClient:
         payload["page_size"] = page_size
 
         logger.debug(f"Fetching goods list page {page} with size {page_size}, filters={kwargs}")
-        return self._make_request("POST", api_path, data=payload) # POST confirmed
+        return self._make_request("POST", api_path, data=payload) # POST confirmed 
 
     def get_user_orders(self, user_id: str, page_index: int = 1, page_size: int = 10, **kwargs) -> Dict[str, Any]:
         """Fetch orders for a specific user (API: xe.get.user.orders/1.0.0).

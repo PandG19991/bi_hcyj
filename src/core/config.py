@@ -4,8 +4,9 @@ from dotenv import load_dotenv
 # Load environment variables from .env file, if it exists
 # Only load .env file if not running under pytest
 if os.getenv("PYTEST_RUNNING") is None:
-    load_dotenv() 
-    # print("[DEBUG config.py] .env loaded.") # Removed debug print
+    # Force overwrite existing env vars with values from .env
+    load_dotenv(override=True) 
+    # print("[DEBUG config.py] .env loaded with override.") # Keep for clarity
 # else:
     # print("[DEBUG config.py] PYTEST_RUNNING detected, skipping .env load.") # Removed debug print
 

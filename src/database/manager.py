@@ -146,13 +146,14 @@ def upsert_order_items(db: Session, items_data: List[Dict[str, Any]]) -> int:
     upsert_stmt = insert_stmt.on_duplicate_key_update(update_dict)
     
     try:
-        result = db.execute(upsert_stmt, valid_items_data) 
-        # MySQL Connector/Python returns rowcount correctly for ON DUPLICATE KEY UPDATE
-        # It counts 1 for each insert, 2 for each update.
-        # We are interested in the number of rows *affected* (inserted or updated).
-        count = result.rowcount 
-        logger.info(f"Successfully upserted/updated {len(valid_items_data)} order items (DB reported rows affected: {count}). Skipped {skipped_no_sku} items due to missing sku_id.")
-        return len(valid_items_data) # Return number processed by this function
+        # Execute the upsert statement for valid items
+        db.execute(upsert_stmt, valid_items_data) 
+        
+        # We cannot reliably get rowcount for ON DUPLICATE KEY UPDATE with all drivers/versions.
+        # Instead, we report the number of valid items we attempted to process.
+        processed_count = len(valid_items_data)
+        logger.info(f"Successfully executed upsert for {processed_count} order items. Skipped {skipped_no_sku} items due to missing sku_id.")
+        return processed_count # Return number of items processed by this function
     except Exception as e:
         logger.error(f"Error during order item upsert: {e}", exc_info=True)
         # Rollback is handled by get_db
